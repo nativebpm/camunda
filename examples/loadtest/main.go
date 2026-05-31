@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -25,9 +24,9 @@ var (
 )
 
 func main() {
-	// Disable verbose debug logging for load testing to reduce console I/O bottleneck
+	// Use slog for all logs as requested
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Only log warnings or errors during load test
+		Level: slog.LevelInfo, // Set to Info so we can see configuration and results
 	}))
 
 	// Parameters
@@ -52,29 +51,28 @@ func main() {
 		}
 	}
 
-	fmt.Printf("==================================================\n")
-	fmt.Printf("  CAMUNDA LOAD TEST CONFIGURATION\n")
-	fmt.Printf("==================================================\n")
-	fmt.Printf("  Concurrency (Max Tasks): %d\n", concurrency)
-	fmt.Printf("  Total Process Instances: %d\n", totalProcesses)
-	fmt.Printf("  Submission Delay:        %d ms\n", submissionDelayMs)
-	fmt.Printf("  Target Tasks to Process: %d (%d checker, %d decisions)\n",
-		totalProcesses*4, totalProcesses, totalProcesses*3)
-	fmt.Printf("==================================================\n\n")
+	logger.Info("CAMUNDA LOAD TEST INITIALIZED",
+		"concurrency", concurrency,
+		"total_processes", totalProcesses,
+		"submission_delay_ms", submissionDelayMs,
+		"target_checker_tasks", totalProcesses,
+		"target_decision_tasks", totalProcesses*3,
+		"target_total_tasks", totalProcesses*4,
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	client, err := camunda.NewClient("http://localhost:8080", "loadtest-worker")
 	if err != nil {
-		fmt.Printf("Failed to create client: %v\n", err)
+		logger.Error("Failed to create client", "error", err)
 		return
 	}
 
 	// Deploy the BPMN process
-	deploymentID, err := deployProcess(ctx, client)
+	deploymentID, err := deployProcess(ctx, client, logger)
 	if err != nil {
-		fmt.Printf("Failed to deploy BPMN process: %v\n", err)
+		logger.Error("Failed to deploy BPMN process", "error", err)
 		return
 	}
 
@@ -96,8 +94,14 @@ func main() {
 				dec := completedDecision.Load()
 				chk := completedChecker.Load()
 				started := startedInstances.Load()
-				fmt.Printf("[%.1fs elapsed] Started: %d/%d | Checker Completed: %d/%d | Decision Completed: %d/%d (%.1f%%)\n",
-					elapsed, started, totalProcesses, chk, totalProcesses, dec, expectedDecisions, float64(dec)/float64(expectedDecisions)*100)
+				logger.Info("Load test progress status",
+					"elapsed_seconds", fmt.Sprintf("%.1f", elapsed),
+					"started_instances", started,
+					"checker_completed", chk,
+					"decision_completed", dec,
+					"expected_decisions", expectedDecisions,
+					"percentage", fmt.Sprintf("%.1f%%", float64(dec)/float64(expectedDecisions)*100),
+				)
 			}
 		}
 	}()
@@ -174,7 +178,6 @@ func main() {
 			defer func() { <-sem }()
 
 			businessKey := "loadtest-" + uuid.NewString()
-			// Start instance with some simple variables to simulate load
 			varsMap := map[string]camunda.Variable{
 				"applicantName":   camunda.StringVariable(fmt.Sprintf("Load %d", num)),
 				"requestedAmount": camunda.DoubleVariable(5000.0),
@@ -197,8 +200,11 @@ func main() {
 	// Wait for all submissions to finish
 	wg.Wait()
 	submitDuration := time.Since(submitStart)
-	fmt.Printf("Finished submitting %d instances in %v (avg %.2f ms/submit)\n",
-		totalProcesses, submitDuration, float64(submitDuration.Milliseconds())/float64(totalProcesses))
+	logger.Info("Finished submitting instances to Camunda Engine",
+		"count", totalProcesses,
+		"duration", submitDuration,
+		"avg_ms_per_submit", float64(submitDuration.Milliseconds())/float64(totalProcesses),
+	)
 
 	// Wait for all decision tasks to finish processing
 	<-doneChan
@@ -206,24 +212,22 @@ func main() {
 
 	// Clean up deployment at the end to keep the db stateless
 	_ = client.DeleteDeployment(context.Background(), deploymentID, true)
-	fmt.Printf("Cleaned up deployment: %s\n", deploymentID)
+	logger.Info("Cleaned up deployment successfully", "deployment_id", deploymentID)
 
-	// Print Summary
-	fmt.Printf("\n==================================================\n")
-	fmt.Printf("  LOAD TEST RESULTS\n")
-	fmt.Printf("==================================================\n")
-	fmt.Printf("  Total Duration:         %v\n", totalDuration)
-	fmt.Printf("  Instances Submitted:    %d\n", startedInstances.Load())
-	fmt.Printf("  Checker Completed:      %d\n", completedChecker.Load())
-	fmt.Printf("  Decisions Completed:    %d\n", completedDecision.Load())
-	fmt.Printf("  Total Tasks Handled:    %d\n", completedChecker.Load()+completedDecision.Load())
-	fmt.Printf("  Failed Task Requests:   %d\n", failedTasks.Load())
-	fmt.Printf("  Throughput (RPS):       %.2f instances/sec\n", float64(totalProcesses)/totalDuration.Seconds())
-	fmt.Printf("  Task Throughput (TPS):  %.2f tasks/sec\n", float64(completedChecker.Load()+completedDecision.Load())/totalDuration.Seconds())
-	fmt.Printf("==================================================\n")
+	// Print Summary using structured slog logging
+	logger.Info("CAMUNDA LOAD TEST RESULTS",
+		"total_duration", totalDuration,
+		"instances_submitted", startedInstances.Load(),
+		"checker_completed", completedChecker.Load(),
+		"decisions_completed", completedDecision.Load(),
+		"total_tasks_handled", completedChecker.Load()+completedDecision.Load(),
+		"failed_tasks", failedTasks.Load(),
+		"throughput_rps", fmt.Sprintf("%.2f", float64(totalProcesses)/totalDuration.Seconds()),
+		"task_throughput_tps", fmt.Sprintf("%.2f", float64(completedChecker.Load()+completedDecision.Load())/totalDuration.Seconds()),
+	)
 }
 
-func deployProcess(ctx context.Context, client *camunda.Client) (string, error) {
+func deployProcess(ctx context.Context, client *camunda.Client, logger *slog.Logger) (string, error) {
 	// Read BPMN file from loan-granting example
 	file, err := os.Open("../loan-granting/bpmn/loan-granting.bpmn")
 	if err != nil {
@@ -235,11 +239,6 @@ func deployProcess(ctx context.Context, client *camunda.Client) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	fmt.Printf("Deployed process for load testing. Deployment ID: %s\n", deploymentID)
+	logger.Info("Deployed process for load testing", "deployment_id", deploymentID)
 	return deploymentID, nil
-}
-
-// Simple JSON helper
-func importJSON(data []byte, val any) {
-	_ = json.Unmarshal(data, val)
 }
