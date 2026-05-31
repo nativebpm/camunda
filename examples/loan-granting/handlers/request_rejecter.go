@@ -6,17 +6,20 @@ import (
 	"log/slog"
 
 	"github.com/nativebpm/camunda"
+	storepkg "github.com/nativebpm/camunda/examples/loan-granting/store"
 )
 
 // RequestRejecter handles loan rejection tasks
 type RequestRejecter struct {
 	logger *slog.Logger
+	store  *storepkg.Store
 }
 
 // NewRequestRejecter creates a new request rejecter handler
-func NewRequestRejecter(logger *slog.Logger) *RequestRejecter {
+func NewRequestRejecter(logger *slog.Logger, store *storepkg.Store) *RequestRejecter {
 	return &RequestRejecter{
 		logger: logger,
+		store:  store,
 	}
 }
 
@@ -49,6 +52,14 @@ func (h *RequestRejecter) Handle(ctx context.Context, client *camunda.Client, ta
 			requestedAmount = val
 		}
 	}
+	if applicantName == "" && task.BusinessKey != "" && h.store != nil {
+		if app, ok := h.store.Get(task.BusinessKey); ok {
+			applicantName = app.ApplicantName
+			if requestedAmount == 0 {
+				requestedAmount = app.RequestedAmount
+			}
+		}
+	}
 
 	h.logger.Info("Evaluating loan rejection",
 		"applicantName", applicantName,
@@ -60,40 +71,40 @@ func (h *RequestRejecter) Handle(ctx context.Context, client *camunda.Client, ta
 	//time.Sleep(2 * time.Second)
 
 	// Prepare detailed rejection reason based on credit score
-	var reason, recommendation string
+	var reason string
 
 	if score <= 3 {
 		reason = fmt.Sprintf("Credit score of %.1f is significantly below our minimum requirement of 5.0", score)
-		recommendation = "We recommend working on improving your credit score by paying existing debts and maintaining consistent employment"
 	} else if score <= 5 {
 		reason = fmt.Sprintf("Credit score of %.1f does not meet our minimum requirement of 5.0", score)
-		recommendation = "You may reapply after 6 months. Consider reducing existing debts to improve your credit score"
 	} else {
 		// This shouldn't happen (gateway condition is score <= 5), but handle it
 		reason = fmt.Sprintf("Unable to approve loan at this time (score: %.1f)", score)
-		recommendation = "Please contact our support team for more information"
 	}
 
 	h.logger.Info("Loan rejected",
 		"creditScore", score,
 		"reason", reason)
 
-	// Complete the task with results
-	// Use provided complete factory for fluent completion
-	err := complete().
-		BooleanVariable("loanRejected", true).
-		StringVariable("rejectionReason", reason).
-		StringVariable("recommendation", recommendation).
-		StringVariable("rejectionMessage", fmt.Sprintf("We're sorry, but we cannot approve your loan application for $%.2f. %s", requestedAmount, reason)).
-		StringVariable("canReapplyAfter", "6 months").
-		Execute()
-	if err != nil {
+	// Save rejection result to in-memory store instead of writing variables to Camunda
+	if task.BusinessKey != "" && h.store != nil {
+		res := storepkg.Result{
+			Score:          int(score),
+			LoanGranted:    false,
+			ApprovedAmount: 0,
+			InterestRate:   0,
+			Message:        fmt.Sprintf("Rejection: %s", reason),
+		}
+		h.store.AppendResult(task.BusinessKey, res)
+	}
+
+	// Complete the task without writing extra variables to Camunda
+	if err := complete().Execute(); err != nil {
 		return err
 	}
 
-	h.logger.Info("Loan request rejected",
+	h.logger.Info("Loan request result saved to in-memory DB",
 		"taskID", task.ID,
-		"reason", reason,
-		"recommendation", recommendation)
+		"reason", reason)
 	return nil
 }

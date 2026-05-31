@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/nativebpm/camunda/internal/vars"
-	"github.com/nativebpm/httpclient"
+	"github.com/nativebpm/streamhttp"
 )
 
 // rnd is a package-local random number generator used for jitter.
@@ -21,7 +21,7 @@ var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // TaskCompletion provides a fluent API for completing external tasks
 type TaskCompletion struct {
-	httpClient     *httpclient.HTTPClient
+	httpClient     *streamhttp.Client
 	workerID       string
 	ctx            context.Context
 	taskID         string
@@ -31,7 +31,7 @@ type TaskCompletion struct {
 }
 
 // NewTaskCompletion creates a new TaskCompletion builder
-func NewTaskCompletion(httpClient *httpclient.HTTPClient, workerID, taskID string, logger *slog.Logger) *TaskCompletion {
+func NewTaskCompletion(httpClient *streamhttp.Client, workerID, taskID string, logger *slog.Logger) *TaskCompletion {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -226,7 +226,7 @@ func (tc *TaskCompletion) Execute() error {
 
 // TaskFailure preovides a fluent API for reporting task failures
 type TaskFailure struct {
-	httpClient   *httpclient.HTTPClient
+	httpClient   *streamhttp.Client
 	workerID     string
 	ctx          context.Context
 	taskID       string
@@ -237,7 +237,7 @@ type TaskFailure struct {
 }
 
 // NewTaskFailure creates a new TaskFailure builder
-func NewTaskFailure(httpClient *httpclient.HTTPClient, workerID, taskID string) *TaskFailure {
+func NewTaskFailure(httpClient *streamhttp.Client, workerID, taskID string) *TaskFailure {
 	return &TaskFailure{
 		httpClient:   httpClient,
 		workerID:     workerID,
@@ -317,7 +317,7 @@ func (tf *TaskFailure) Execute() error {
 
 // LockExtension provides a fluent API for extending task locks
 type LockExtension struct {
-	httpClient  *httpclient.HTTPClient
+	httpClient  *streamhttp.Client
 	workerID    string
 	ctx         context.Context
 	taskID      string
@@ -325,7 +325,7 @@ type LockExtension struct {
 }
 
 // NewLockExtension creates a new LockExtension builder
-func NewLockExtension(httpClient *httpclient.HTTPClient, workerID, taskID string, newDuration int) *LockExtension {
+func NewLockExtension(httpClient *streamhttp.Client, workerID, taskID string, newDuration int) *LockExtension {
 	return &LockExtension{
 		httpClient:  httpClient,
 		workerID:    workerID,
@@ -374,14 +374,14 @@ func (le *LockExtension) Execute() error {
 
 // TaskUnlock provides a fluent API for unlocking tasks
 type TaskUnlock struct {
-	httpClient *httpclient.HTTPClient
+	httpClient *streamhttp.Client
 	workerID   string
 	ctx        context.Context
 	taskID     string
 }
 
 // NewTaskUnlock creates a new TaskUnlock builder
-func NewTaskUnlock(httpClient *httpclient.HTTPClient, workerID, taskID string) *TaskUnlock {
+func NewTaskUnlock(httpClient *streamhttp.Client, workerID, taskID string) *TaskUnlock {
 	return &TaskUnlock{
 		httpClient: httpClient,
 		workerID:   workerID,

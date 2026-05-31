@@ -6,17 +6,20 @@ import (
 	"log/slog"
 
 	"github.com/nativebpm/camunda"
+	storepkg "github.com/nativebpm/camunda/examples/loan-granting/store"
 )
 
 // LoanGranter handles loan granting tasks
 type LoanGranter struct {
 	logger *slog.Logger
+	store  *storepkg.Store
 }
 
 // NewLoanGranter creates a new loan granter handler
-func NewLoanGranter(logger *slog.Logger) *LoanGranter {
+func NewLoanGranter(logger *slog.Logger, store *storepkg.Store) *LoanGranter {
 	return &LoanGranter{
 		logger: logger,
+		store:  store,
 	}
 }
 
@@ -43,11 +46,19 @@ func (h *LoanGranter) Handle(ctx context.Context, client *camunda.Client, task c
 		}
 	}
 
-	// Extract applicant name for logging
+	// Extract applicant name for logging; fall back to store
 	var applicantName string
 	if nameVar, ok := task.Variables["applicantName"]; ok {
 		if val, ok := nameVar.Value.(string); ok {
 			applicantName = val
+		}
+	}
+	if applicantName == "" && task.BusinessKey != "" && h.store != nil {
+		if app, ok := h.store.Get(task.BusinessKey); ok {
+			applicantName = app.ApplicantName
+			if requestedAmount == 0 {
+				requestedAmount = app.RequestedAmount
+			}
 		}
 	}
 
@@ -78,19 +89,24 @@ func (h *LoanGranter) Handle(ctx context.Context, client *camunda.Client, task c
 		"interestRate", interestRate,
 		"creditScore", score)
 
-	// Complete the task with results
-	// Use the complete factory for fluent completion
-	err := complete().
-		BooleanVariable("loanGranted", true).
-		DoubleVariable("approvedAmount", approvedAmount).
-		DoubleVariable("interestRate", interestRate).
-		StringVariable("approvalMessage", fmt.Sprintf("Congratulations! Your loan of $%.2f has been approved at %.2f%% interest rate.", approvedAmount, interestRate)).
-		Execute()
-	if err != nil {
+	// Save result to in-memory store instead of writing variables to Camunda
+	if task.BusinessKey != "" && h.store != nil {
+		res := storepkg.Result{
+			Score:          int(score),
+			LoanGranted:    true,
+			ApprovedAmount: approvedAmount,
+			InterestRate:   interestRate,
+			Message:        fmt.Sprintf("Congratulations! Your loan of $%.2f has been approved at %.2f%% interest rate.", approvedAmount, interestRate),
+		}
+		h.store.AppendResult(task.BusinessKey, res)
+	}
+
+	// Complete the task without writing extra variables to Camunda
+	if err := complete().Execute(); err != nil {
 		return err
 	}
 
-	h.logger.Info("Loan granted successfully",
+	h.logger.Info("Loan granted stored in in-memory DB",
 		"taskID", task.ID,
 		"approvedAmount", approvedAmount,
 		"interestRate", interestRate)

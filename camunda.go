@@ -11,7 +11,7 @@ import (
 
 	"github.com/nativebpm/camunda/internal/tasks"
 	"github.com/nativebpm/camunda/internal/worker"
-	"github.com/nativebpm/httpclient"
+	"github.com/nativebpm/streamhttp"
 )
 
 type ExternalTask = worker.ExternalTask
@@ -21,15 +21,16 @@ type TopicRequest = worker.TopicRequest
 
 // Client represents a Camunda external task client
 type Client struct {
-	httpClient *httpclient.HTTPClient
+	httpClient *streamhttp.Client
 	workerID   string
 	logger     *slog.Logger
 }
 
 // NewClient creates a new Camunda external task client
-func NewClient(hostURL, workerID string, logger *slog.Logger) (*Client, error) {
+func NewClient(hostURL, workerID string, logger *slog.Logger,
+	middlewares ...func(http.RoundTripper) http.RoundTripper) (*Client, error) {
 	baseURL := hostURL + "/engine-rest"
-	httpClient, err := httpclient.NewClient(http.Client{Timeout: 30 * time.Second}, baseURL)
+	httpClient, err := streamhttp.NewClient(http.Client{Timeout: 30 * time.Second}, baseURL, middlewares...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
 	}
@@ -39,22 +40,6 @@ func NewClient(hostURL, workerID string, logger *slog.Logger) (*Client, error) {
 		workerID:   workerID,
 		logger:     logger,
 	}, nil
-}
-
-// Use adds middleware to the HTTP client
-func (c *Client) Use(middleware httpclient.Middleware) *Client {
-	c.httpClient.Use(middleware)
-	return c
-}
-
-// WithLogger adds logging middleware to the HTTP client
-func (c *Client) WithLogger(logger *slog.Logger) *Client {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	c.httpClient.WithLogger(logger)
-	c.logger = logger
-	return c
 }
 
 // TaskCompletion provides a fluent API for completing external tasks
@@ -89,21 +74,26 @@ func (c *Client) Unlock(taskID string) *TaskUnlock {
 	return tasks.NewTaskUnlock(c.httpClient, c.workerID, taskID)
 }
 
-// StartProcessInstance starts a new process instance by process definition key
-func (c *Client) StartProcessInstance(ctx context.Context, processDefinitionKey string, variables map[string]Variable) (string, error) {
+// StartProcessInstance starts a process instance and sets the businessKey
+// The variables map can be nil or empty; heavy application data should be stored
+// outside Camunda (for example in an in-memory store) and referenced by businessKey.
+func (c *Client) StartProcessInstance(ctx context.Context, processDefinitionKey, businessKey string, variables map[string]Variable) (string, error) {
+	// Prepare request payload
+	payload := map[string]any{"businessKey": businessKey, "variables": variables}
+
 	resp, err := c.httpClient.POST(ctx, "/process-definition/key/{processDefinitionKey}/start").
 		PathParam("processDefinitionKey", processDefinitionKey).
-		JSON(map[string]any{"variables": variables}).
+		JSON(payload).
 		Send()
 
 	if err != nil {
 		return "", fmt.Errorf("failed to send start process request: %w", err)
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return "", fmt.Errorf("failed to read response body: %w", readErr)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -116,7 +106,6 @@ func (c *Client) StartProcessInstance(ctx context.Context, processDefinitionKey 
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("failed to unmarshal process instance: %w", err)
 	}
-
 	return result.ID, nil
 }
 

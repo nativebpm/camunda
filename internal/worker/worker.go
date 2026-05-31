@@ -13,7 +13,7 @@ import (
 
 	"github.com/nativebpm/camunda/internal/tasks"
 	"github.com/nativebpm/camunda/internal/vars"
-	"github.com/nativebpm/httpclient"
+	"github.com/nativebpm/streamhttp"
 )
 
 // TopicRequest represents a topic request for fetching tasks
@@ -110,7 +110,7 @@ type FailFunc func(errorMessage, errorDetails string, retries, retryTimeout int)
 
 // Worker manages external task polling and processing
 type Worker struct {
-	httpClient           *httpclient.HTTPClient
+	httpClient           *streamhttp.Client
 	workerID             string
 	logger               *slog.Logger
 	handlers             map[string]TaskHandler
@@ -124,7 +124,7 @@ type Worker struct {
 }
 
 // New creates a new external task worker
-func New(httpClient *httpclient.HTTPClient, workerID string, logger *slog.Logger) *Worker {
+func New(httpClient *streamhttp.Client, workerID string, logger *slog.Logger) *Worker {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -355,5 +355,16 @@ func (w *Worker) processTask(ctx context.Context, task ExternalTask) {
 	}
 
 	// Handler is responsible for logging and error handling
-	_ = handler.Handle(ctx, task, complete, fail)
+	if err := handler.Handle(ctx, task, complete, fail); err != nil {
+		loggerWithCtx.Error("task handler returned error",
+			"taskID", task.ID,
+			"error", err)
+
+		// Try to report failure to Camunda so the engine records the error and retries if configured
+		if failErr := fail(err.Error(), "handler error", 0, 0); failErr != nil {
+			loggerWithCtx.Error("failed to report task failure to Camunda",
+				"taskID", task.ID,
+				"reportError", failErr)
+		}
+	}
 }

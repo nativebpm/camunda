@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/nativebpm/camunda/internal/vars"
-	"github.com/nativebpm/httpclient"
+	"github.com/nativebpm/streamhttp"
 )
 
 // TestExternalTask_UnmarshalJSON tests parsing of Camunda timestamp formats
@@ -113,7 +113,7 @@ func (m *MockHandler) Handle(ctx context.Context, task ExternalTask, complete Co
 }
 
 func TestNew(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	worker := New(httpClient, "test-worker", logger)
@@ -152,7 +152,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNew_NilLogger(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 
 	worker := New(httpClient, "test-worker", nil)
 
@@ -166,7 +166,7 @@ func TestNew_NilLogger(t *testing.T) {
 }
 
 func TestWorker_RegisterHandler(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 	logger := slog.Default()
 	worker := New(httpClient, "test-worker", logger)
 
@@ -207,7 +207,7 @@ func TestWorker_RegisterHandler(t *testing.T) {
 }
 
 func TestWorker_RegisterHandler_Multiple(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 	worker := New(httpClient, "test-worker", nil)
 
 	handler1 := &MockHandler{}
@@ -234,7 +234,7 @@ func TestWorker_RegisterHandler_Multiple(t *testing.T) {
 }
 
 func TestWorker_SetMaxTasks(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 	worker := New(httpClient, "test-worker", nil)
 
 	result := worker.SetMaxTasks(20)
@@ -250,7 +250,7 @@ func TestWorker_SetMaxTasks(t *testing.T) {
 }
 
 func TestWorker_SetPollInterval(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 	worker := New(httpClient, "test-worker", nil)
 
 	interval := 10 * time.Second
@@ -267,7 +267,7 @@ func TestWorker_SetPollInterval(t *testing.T) {
 }
 
 func TestWorker_FluentAPI(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 	handler := &MockHandler{}
 
 	// Test method chaining
@@ -306,7 +306,7 @@ func TestWorker_ProcessTask(t *testing.T) {
 	}))
 	defer server.Close()
 
-	httpClient, _ := httpclient.NewClient(http.Client{}, server.URL)
+	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	worker := New(httpClient, "test-worker", logger)
 
@@ -344,7 +344,7 @@ func TestWorker_ProcessTask(t *testing.T) {
 }
 
 func TestWorker_ProcessTask_NoHandler(t *testing.T) {
-	httpClient, _ := httpclient.NewClient(http.Client{}, "http://localhost:8080")
+	httpClient, _ := streamhttp.NewClient(http.Client{}, "http://localhost:8080")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	worker := New(httpClient, "test-worker", logger)
 
@@ -378,7 +378,7 @@ func TestCompleteFunc(t *testing.T) {
 	}))
 	defer server.Close()
 
-	httpClient, _ := httpclient.NewClient(http.Client{}, server.URL)
+	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
 	worker := New(httpClient, "test-worker", nil)
 
 	handler := &MockHandler{}
@@ -418,7 +418,7 @@ func TestFailFunc(t *testing.T) {
 	}))
 	defer server.Close()
 
-	httpClient, _ := httpclient.NewClient(http.Client{}, server.URL)
+	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
 	worker := New(httpClient, "test-worker", nil)
 
 	handler := &MockHandler{}

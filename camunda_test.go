@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nativebpm/httpclient"
+	"github.com/nativebpm/streamhttp"
 )
 
 func TestNewClient(t *testing.T) {
@@ -205,7 +205,7 @@ func TestComplete(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := httpclient.NewClient(http.Client{}, server.URL)
+	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
@@ -248,7 +248,7 @@ func TestHandleFailure(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := httpclient.NewClient(http.Client{}, server.URL)
+	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
@@ -297,7 +297,7 @@ func TestExtendLock(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := httpclient.NewClient(http.Client{}, server.URL)
+	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
@@ -336,7 +336,7 @@ func TestUnlock(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := httpclient.NewClient(http.Client{}, server.URL)
+	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
