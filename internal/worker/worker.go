@@ -334,7 +334,7 @@ func (w *Worker) processTask(ctx context.Context, task ExternalTask) {
 	}
 
 	complete := func() *tasks.TaskCompletion {
-		return tasks.NewTaskCompletion(w.httpClient, w.workerID, task.ID).Context(ctx)
+		return tasks.NewTaskCompletion(w.httpClient, w.workerID, task.ID).Context(ctx).Logger(w.logger)
 	}
 
 	// Create fail function

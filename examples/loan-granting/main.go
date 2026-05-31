@@ -33,6 +33,17 @@ func main() {
 	}
 	logger.Info("Submission throttle configured", "delay_ms", submissionDelayMs)
 
+	// Make applications count configurable via env var
+	appsCount := 5 // default for quick testing/debugging
+	if v := os.Getenv("CAMUNDA_APPLICATIONS_COUNT"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			appsCount = parsed
+		} else {
+			logger.Warn("Invalid CAMUNDA_APPLICATIONS_COUNT, using default", "value", v)
+		}
+	}
+	logger.Info("Workload configured", "applications_count", appsCount)
+
 	// Create a new Camunda client
 	client, err := camunda.NewClient("http://localhost:8080", "loan-worker")
 	if err != nil {
@@ -54,7 +65,7 @@ func main() {
 	go func() {
 		// Simulate external requests with throttling to avoid DB contention
 		logger.Info("Simulating external loan applications (throttled)...")
-		for i := 1; i <= 1000; i++ {
+		for i := 1; i <= appsCount; i++ {
 			// Build application object and save to in-memory store under a businessKey
 			// Use a UUID to ensure globally-unique business keys
 			businessKey := "loan-" + uuid.NewString()
@@ -150,8 +161,8 @@ func createWorker(client *camunda.Client, logger *slog.Logger, store *storepkg.S
 	// Decider makes a decision based on scores in the external store and sets a small process variable `decision`
 	w.RegisterHandler("decider", decider, 60000, []string{})
 	// Grant/reject tasks will be executed after the decision; they only need the `decision` variable if desired
-	w.RegisterHandler("loanGranter", loanGranter, 60000, []string{"decision"})
-	w.RegisterHandler("requestRejecter", requestRejecter, 60000, []string{"decision"})
+	w.RegisterHandler("loanGranter", loanGranter, 60000, []string{})
+	w.RegisterHandler("requestRejecter", requestRejecter, 60000, []string{})
 	// Recommended: keep maxTasks in the 10-50 range depending on workload
 	w.SetMaxTasks(50)
 

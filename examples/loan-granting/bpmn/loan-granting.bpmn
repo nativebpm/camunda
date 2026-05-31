@@ -9,7 +9,7 @@
     <bpmn:subProcess id="SubProcess_16kr5xn" name="Decide if a loan is granted">
       <bpmn:incoming>SequenceFlow_12biatx</bpmn:incoming>
       <bpmn:outgoing>SequenceFlow_1pbe3dr</bpmn:outgoing>
-  <bpmn:multiInstanceLoopCharacteristics camunda:collection="${execution.getVariableLocal('creditScores')}" camunda:elementVariable="score" />
+  <bpmn:multiInstanceLoopCharacteristics camunda:collection="${creditScores}" camunda:elementVariable="score" />
       <bpmn:exclusiveGateway id="ExclusiveGateway_12xhuxz">
         <bpmn:incoming>SequenceFlow_04c54bl</bpmn:incoming>
         <bpmn:outgoing>SequenceFlow_17zmvol</bpmn:outgoing>

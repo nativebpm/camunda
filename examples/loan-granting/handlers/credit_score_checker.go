@@ -76,7 +76,7 @@ func (h *CreditScoreChecker) Handle(ctx context.Context, client *camunda.Client,
 		h.store.AppendScores(task.BusinessKey, scores)
 	}
 
-	err := complete().Execute()
+	err := complete().ListVariable("creditScores", scores).Execute()
 	if err != nil {
 		return err
 	}

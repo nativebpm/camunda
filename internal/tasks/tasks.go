@@ -39,7 +39,16 @@ func NewTaskCompletion(httpClient *httpstream.Client, workerID, taskID string) *
 		taskID:         taskID,
 		variables:      make(map[string]vars.Variable),
 		localVariables: make(map[string]vars.Variable),
+		logger:         slog.Default(),
 	}
+}
+
+// Logger sets the logger for TaskCompletion
+func (tc *TaskCompletion) Logger(logger *slog.Logger) *TaskCompletion {
+	if logger != nil {
+		tc.logger = logger
+	}
+	return tc
 }
 
 func (tc *TaskCompletion) Context(ctx context.Context) *TaskCompletion {

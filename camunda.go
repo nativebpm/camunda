@@ -142,6 +142,61 @@ func (c *Client) DeployProcess(ctx context.Context, deploymentName string, bpmnR
 	return result.ID, nil
 }
 
+// EvaluateDecision evaluates a DMN decision table by its key.
+func (c *Client) EvaluateDecision(ctx context.Context, decisionDefinitionKey string, variables map[string]Variable) ([]map[string]Variable, error) {
+	payload := map[string]any{"variables": variables}
+
+	resp, err := c.httpClient.POST(ctx, "/decision-definition/key/{decisionDefinitionKey}/evaluate").
+		PathParam("decisionDefinitionKey", decisionDefinitionKey).
+		JSON(payload).
+		Send()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to send evaluate decision request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", readErr)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("evaluate decision request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result []map[string]Variable
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal decision result: %w", err)
+	}
+
+	return result, nil
+}
+
+// DeleteDeployment deletes a deployment by ID. If cascade is true, it also deletes all process instances,
+// decision instances, and historic occurrences associated with this deployment.
+func (c *Client) DeleteDeployment(ctx context.Context, deploymentID string, cascade bool) error {
+	req := c.httpClient.DELETE(ctx, "/deployment/{id}").
+		PathParam("id", deploymentID)
+
+	if cascade {
+		req = req.Param("cascade", "true")
+	}
+
+	resp, err := req.Send()
+	if err != nil {
+		return fmt.Errorf("failed to send delete deployment request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete deployment request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // TaskHandler defines the interface for external task handlers
 // Handlers implement business logic for specific topics
 type TaskHandler interface {
@@ -151,6 +206,14 @@ type TaskHandler interface {
 	// variable building:
 	//   complete().StringVariable("ok", "yes").Execute()
 	Handle(ctx context.Context, client *Client, task ExternalTask, complete CompleteFunc, fail FailFunc) error
+}
+
+// TaskHandlerFunc is an adapter to allow the use of ordinary functions as task handlers.
+type TaskHandlerFunc func(ctx context.Context, client *Client, task ExternalTask, complete CompleteFunc, fail FailFunc) error
+
+// Handle calls f(ctx, client, task, complete, fail).
+func (f TaskHandlerFunc) Handle(ctx context.Context, client *Client, task ExternalTask, complete CompleteFunc, fail FailFunc) error {
+	return f(ctx, client, task, complete, fail)
 }
 
 // Worker manages external task polling and processing with a clean handler-based architecture

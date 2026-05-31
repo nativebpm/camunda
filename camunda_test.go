@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,5 +473,161 @@ func BenchmarkExternalTaskUnmarshal(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var tasks []ExternalTask
 		_ = json.Unmarshal([]byte(data), &tasks)
+	}
+}
+
+func TestEvaluateDecision(t *testing.T) {
+	// Mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/decision-definition/key/decision1/evaluate" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		// Check request body
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		// Return simulated DMN output
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"result":{"value":"approved","type":"String"}}]`))
+	}))
+	defer server.Close()
+
+	// Create client
+	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
+	client := &Client{
+		httpClient: httpClient,
+		workerID:   "test-worker",
+	}
+
+	// Test EvaluateDecision
+	vars := NewVariables().String("input1", "value1").Variables()
+	res, err := client.EvaluateDecision(context.Background(), "decision1", vars)
+	if err != nil {
+		t.Fatalf("EvaluateDecision failed: %v", err)
+	}
+
+	if len(res) != 1 {
+		t.Fatalf("expected 1 result rule, got %d", len(res))
+	}
+
+	val, exists := res[0]["result"]
+	if !exists {
+		t.Fatal("expected 'result' variable in output")
+	}
+
+	if val.Value != "approved" {
+		t.Errorf("expected 'approved', got %v", val.Value)
+	}
+}
+
+func TestDeleteDeployment(t *testing.T) {
+	var receivedCascade string
+	// Mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" || r.URL.Path != "/deployment/deploy1" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		receivedCascade = r.URL.Query().Get("cascade")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	// Create client
+	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
+	client := &Client{
+		httpClient: httpClient,
+		workerID:   "test-worker",
+	}
+
+	// Test DeleteDeployment with cascade=true
+	err := client.DeleteDeployment(context.Background(), "deploy1", true)
+	if err != nil {
+		t.Fatalf("DeleteDeployment failed: %v", err)
+	}
+
+	if receivedCascade != "true" {
+		t.Errorf("expected cascade=true query param, got %s", receivedCascade)
+	}
+}
+
+func TestLifecycleBPMNAndDMNWithoutState(t *testing.T) {
+	// Step 1: Deploy, Step 2: Execute, Step 3: Delete cascade
+	deployed := false
+	executed := false
+	deleted := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		
+		if r.Method == "POST" && r.URL.Path == "/deployment/create" {
+			deployed = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"deploy-123"}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/process-definition/key/process1/start" {
+			executed = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"instance-123"}`))
+			return
+		}
+		if r.Method == "DELETE" && r.URL.Path == "/deployment/deploy-123" {
+			if r.URL.Query().Get("cascade") == "true" {
+				deleted = true
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
+	client := &Client{
+		httpClient: httpClient,
+		workerID:   "test-worker",
+	}
+
+	ctx := context.Background()
+
+	// 1. Deploy
+	bpmnData := strings.NewReader("<bpmn/>")
+	deployID, err := client.DeployProcess(ctx, "test-deploy", bpmnData, "process.bpmn")
+	if err != nil {
+		t.Fatalf("DeployProcess failed: %v", err)
+	}
+	if deployID != "deploy-123" || !deployed {
+		t.Fatalf("expected deployID 'deploy-123', got %s (deployed=%t)", deployID, deployed)
+	}
+
+	// Setup automatic cleanup in defer
+	defer func() {
+		cleanupErr := client.DeleteDeployment(ctx, deployID, true)
+		if cleanupErr != nil {
+			t.Errorf("cleanup failed: %v", cleanupErr)
+		}
+		if !deleted {
+			t.Error("expected deployment to be deleted cascadingly")
+		}
+	}()
+
+	// 2. Start Instance
+	instanceID, err := client.StartProcessInstance(ctx, "process1", "biz-123", nil)
+	if err != nil {
+		t.Fatalf("StartProcessInstance failed: %v", err)
+	}
+	if instanceID != "instance-123" || !executed {
+		t.Fatalf("expected instanceID 'instance-123', got %s (executed=%t)", instanceID, executed)
 	}
 }
