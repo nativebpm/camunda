@@ -4,5 +4,5 @@ go 1.21
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/nativebpm/streamhttp v1.0.1
+	github.com/nativebpm/httpstream v0.0.1
 )

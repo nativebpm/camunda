@@ -3,21 +3,19 @@ package camunda
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/nativebpm/streamhttp"
+	"github.com/nativebpm/httpstream"
 )
 
 func TestNewClient(t *testing.T) {
-	logger := slog.Default()
 	baseURL := "http://localhost:8080/engine-rest"
 	workerID := "test-worker"
 
-	client, err := NewClient(baseURL, workerID, logger)
+	client, err := NewClient(baseURL, workerID)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -205,7 +203,7 @@ func TestComplete(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
+	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
@@ -248,7 +246,7 @@ func TestHandleFailure(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
+	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
@@ -297,7 +295,7 @@ func TestExtendLock(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
+	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
@@ -336,7 +334,7 @@ func TestUnlock(t *testing.T) {
 	defer server.Close()
 
 	// Create client
-	httpClient, _ := streamhttp.NewClient(http.Client{}, server.URL)
+	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
 	client := &Client{
 		httpClient: httpClient,
 		workerID:   "test-worker",
@@ -409,7 +407,7 @@ func BenchmarkNewClient(b *testing.B) {
 	workerID := "test-worker"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = NewClient(baseURL, workerID, slog.Default())
+		_, _ = NewClient(baseURL, workerID)
 	}
 }
 

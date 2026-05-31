@@ -13,7 +13,7 @@ import (
 
 	"github.com/nativebpm/camunda/internal/tasks"
 	"github.com/nativebpm/camunda/internal/vars"
-	"github.com/nativebpm/streamhttp"
+	"github.com/nativebpm/httpstream"
 )
 
 // TopicRequest represents a topic request for fetching tasks
@@ -110,7 +110,7 @@ type FailFunc func(errorMessage, errorDetails string, retries, retryTimeout int)
 
 // Worker manages external task polling and processing
 type Worker struct {
-	httpClient           *streamhttp.Client
+	httpClient           *httpstream.Client
 	workerID             string
 	logger               *slog.Logger
 	handlers             map[string]TaskHandler
@@ -124,7 +124,7 @@ type Worker struct {
 }
 
 // New creates a new external task worker
-func New(httpClient *streamhttp.Client, workerID string, logger *slog.Logger) *Worker {
+func New(httpClient *httpstream.Client, workerID string, logger *slog.Logger) *Worker {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -333,14 +333,8 @@ func (w *Worker) processTask(ctx context.Context, task ExternalTask) {
 		return
 	}
 
-	// Create complete factory: handlers can call complete() to get a TaskCompletion
-	// and then use fluent methods: complete().StringVariable(...).Execute()
-	// Create a logger pre-attached with process/task context to help correlate
-	// completion logs with engine-side errors (e.g., optimistic locking).
-	loggerWithCtx := w.logger.With("processInstanceID", task.ProcessInstanceID, "activityID", task.ActivityID, "topic", task.TopicName)
-
 	complete := func() *tasks.TaskCompletion {
-		return tasks.NewTaskCompletion(w.httpClient, w.workerID, task.ID, loggerWithCtx).Context(ctx)
+		return tasks.NewTaskCompletion(w.httpClient, w.workerID, task.ID).Context(ctx)
 	}
 
 	// Create fail function
@@ -356,13 +350,13 @@ func (w *Worker) processTask(ctx context.Context, task ExternalTask) {
 
 	// Handler is responsible for logging and error handling
 	if err := handler.Handle(ctx, task, complete, fail); err != nil {
-		loggerWithCtx.Error("task handler returned error",
+		slog.Error("task handler returned error",
 			"taskID", task.ID,
 			"error", err)
 
 		// Try to report failure to Camunda so the engine records the error and retries if configured
 		if failErr := fail(err.Error(), "handler error", 0, 0); failErr != nil {
-			loggerWithCtx.Error("failed to report task failure to Camunda",
+			slog.Error("failed to report task failure to Camunda",
 				"taskID", task.ID,
 				"reportError", failErr)
 		}
