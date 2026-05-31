@@ -131,7 +131,8 @@ func main() {
 			logger.Error("Failed to create Sequin worker", "error", err)
 			return
 		}
-		logger.Info("Using Sequin logical CDC worker")
+		sequinWorker.SetMaxConcurrency(concurrency)
+		logger.Info("Using Sequin logical CDC worker", "concurrency", concurrency)
 	} else {
 		// Configure normal workers
 		normalWorker = camunda.NewWorker(client, logger)

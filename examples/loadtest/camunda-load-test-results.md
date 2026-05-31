@@ -86,7 +86,7 @@ We ran benchmarks deploying the `loan-granting.bpmn` workflow, concurrently subm
 | **CDC-500** | 30 | Sequin CDC (REST) | 500 | 2000 (2047) | 20.51 s | **24.37 /s** | **99.79 /s** | 0 | **Success (Database-Free)**. Peak performance. Go worker does not access Camunda DB directly. Locking and variables fetching are performed via REST APIs, while concurrency control is delegated to Sequin Stream. |
 | **CDC-1000** | 80 | Sequin CDC (REST) | 1000 | 4000 (4014) | 71.52 s | **13.98 /s** | **56.13 /s** | 0 | **Success (Percentiles measured)**. Latency: p50=56.9s, p90=67.5s, p99=70.4s. Concurrency pressure on Postgres DB causes transaction retries, increasing process latency, but system remains 100% stable with no failures. |
 | **CDC-2000** | 80 | Sequin CDC (REST) | 2000 | 8000 (8036) | 22.41 s | **89.26 /s** | **358.66 /s** | 0 | **Success (Percentiles measured)**. Latency: p50=13.8s, p90=20.4s, p99=21.1s. Outstanding throughput performance under Go 1.26. Outperforms classic REST polling by eliminating connection and thread lock storms. |
-| **CDC-3000** | 100 | Sequin CDC (REST) | 3000 | 12000 (12027) | 133.62 s | **22.45 /s** | **90.01 /s** | 0 | **Peak Load Limit**. Reaching PostgreSQL CPU saturation and connection pool limit. System handles load gracefully with zero failed tasks. |
+| **CDC-3000** | 30 | Sequin CDC (REST) | 3000 | 12000 (12017) | 44.87 s | **66.87 /s** | **267.84 /s** | 0 | **Success (Optimized)**. Latency: p50=29.2s, p90=40.6s, p99=43.0s. Capping worker threads to 30 and using randomized sleep backoff (500-1500ms) on optimistic lock conflicts dramatically reduced PostgreSQL CPU pressure, achieving a 3x throughput speedup. |
 
 ---
 
