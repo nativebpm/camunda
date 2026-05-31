@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/nativebpm/connectors/httpclient"
+	"github.com/nativebpm/httpclient"
 )
 
 // Variable represents a Camunda variable with type safety

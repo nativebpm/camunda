@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/nativebpm/camunda/internal/builder"
-	"github.com/nativebpm/connectors/httpclient"
+	"github.com/nativebpm/httpclient"
 )
 
 // TestExternalTask_UnmarshalJSON tests parsing of Camunda timestamp formats

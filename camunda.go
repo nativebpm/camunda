@@ -11,7 +11,7 @@ import (
 
 	"github.com/nativebpm/camunda/internal/builder"
 	"github.com/nativebpm/camunda/internal/worker"
-	"github.com/nativebpm/connectors/httpclient"
+	"github.com/nativebpm/httpclient"
 )
 
 // ExternalTask represents a Camunda external task

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nativebpm/connectors/httpclient"
+	"github.com/nativebpm/httpclient"
 )
 
 func TestNewClient(t *testing.T) {
