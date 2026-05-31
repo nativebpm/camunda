@@ -87,6 +87,7 @@ We ran benchmarks deploying the `loan-granting.bpmn` workflow, concurrently subm
 | **CDC-1000** | 80 | Sequin CDC (REST) | 1000 | 4000 (4014) | 71.52 s | **13.98 /s** | **56.13 /s** | 0 | **Success (Percentiles measured)**. Latency: p50=56.9s, p90=67.5s, p99=70.4s. Concurrency pressure on Postgres DB causes transaction retries, increasing process latency, but system remains 100% stable with no failures. |
 | **CDC-2000** | 80 | Sequin CDC (REST) | 2000 | 8000 (8036) | 22.41 s | **89.26 /s** | **358.66 /s** | 0 | **Success (Percentiles measured)**. Latency: p50=13.8s, p90=20.4s, p99=21.1s. Outstanding throughput performance under Go 1.26. Outperforms classic REST polling by eliminating connection and thread lock storms. |
 | **CDC-3000** | 30 | Sequin CDC (REST) | 3000 | 12000 (12017) | 44.87 s | **66.87 /s** | **267.84 /s** | 0 | **Success (Optimized)**. Latency: p50=29.2s, p90=40.6s, p99=43.0s. Capping worker threads to 30 and using randomized sleep backoff (500-1500ms) on optimistic lock conflicts dramatically reduced PostgreSQL CPU pressure, achieving a 3x throughput speedup. |
+| **CDC-3000-Final** | 30 | Sequin CDC (REST) | 3000 | 12000 (12023) | 46.34 s | **64.74 /s** | **259.45 /s** | 0 | **Success (Optimized + Alloc & Flow Control)**. Latency: p50=30.4s, p90=42.0s, p99=44.6s. Introduced structured JSON parsing (avoiding `map[string]any` allocations) and adaptive back-pressure flow control. Polling is blocked if the worker is fully saturated, protecting Sequin from message visibility expirations. |
 
 ---
 
