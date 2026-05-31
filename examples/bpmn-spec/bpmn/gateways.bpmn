@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_gateways" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="4.6.0">
+  <bpmn:process id="gateways_process" name="BPMN 2.0 Gateways" isExecutable="true" camunda:historyTimeToLive="P180D">
+    <bpmn:startEvent id="StartEvent_1" name="Process Started">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Activity_Init" />
+    <bpmn:serviceTask id="Activity_Init" name="Initialize Data" camunda:type="external" camunda:topic="init-data">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Activity_Init" targetRef="Gateway_Exclusive" />
+    <bpmn:exclusiveGateway id="Gateway_Exclusive" name="Score Verification" default="Flow_Exclusive_Low">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_Exclusive_High</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Exclusive_Low</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Exclusive_High" name="Score &gt; 50" sourceRef="Gateway_Exclusive" targetRef="Activity_High_Score">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${score > 50}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Exclusive_Low" name="Score &lt;= 50" sourceRef="Gateway_Exclusive" targetRef="Activity_Low_Score" />
+    <bpmn:serviceTask id="Activity_High_Score" name="Process High Score" camunda:type="external" camunda:topic="high-score">
+      <bpmn:incoming>Flow_Exclusive_High</bpmn:incoming>
+      <bpmn:outgoing>Flow_Join_Exclusive_1</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Activity_Low_Score" name="Process Low Score" camunda:type="external" camunda:topic="low-score">
+      <bpmn:incoming>Flow_Exclusive_Low</bpmn:incoming>
+      <bpmn:outgoing>Flow_Join_Exclusive_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_Join_Exclusive">
+      <bpmn:incoming>Flow_Join_Exclusive_1</bpmn:incoming>
+      <bpmn:incoming>Flow_Join_Exclusive_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_To_Parallel</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_Join_Exclusive_1" sourceRef="Activity_High_Score" targetRef="Gateway_Join_Exclusive" />
+    <bpmn:sequenceFlow id="Flow_Join_Exclusive_2" sourceRef="Activity_Low_Score" targetRef="Gateway_Join_Exclusive" />
+    <bpmn:sequenceFlow id="Flow_To_Parallel" sourceRef="Gateway_Join_Exclusive" targetRef="Gateway_Parallel" />
+    <bpmn:parallelGateway id="Gateway_Parallel">
+      <bpmn:incoming>Flow_To_Parallel</bpmn:incoming>
+      <bpmn:outgoing>Flow_Parallel_User</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Parallel_Service</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_Parallel_User" sourceRef="Gateway_Parallel" targetRef="Activity_User_Approve" />
+    <bpmn:sequenceFlow id="Flow_Parallel_Service" sourceRef="Gateway_Parallel" targetRef="Activity_Background_Check" />
+    <bpmn:userTask id="Activity_User_Approve" name="User Approval">
+      <bpmn:incoming>Flow_Parallel_User</bpmn:incoming>
+      <bpmn:outgoing>Flow_Join_Parallel_1</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="Activity_Background_Check" name="Background Check" camunda:type="external" camunda:topic="background-check">
+      <bpmn:incoming>Flow_Parallel_Service</bpmn:incoming>
+      <bpmn:outgoing>Flow_Join_Parallel_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="Gateway_Join_Parallel">
+      <bpmn:incoming>Flow_Join_Parallel_1</bpmn:incoming>
+      <bpmn:incoming>Flow_Join_Parallel_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_End</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_Join_Parallel_1" sourceRef="Activity_User_Approve" targetRef="Gateway_Join_Parallel" />
+    <bpmn:sequenceFlow id="Flow_Join_Parallel_2" sourceRef="Activity_Background_Check" targetRef="Gateway_Join_Parallel" />
+    <bpmn:endEvent id="EndEvent_1" name="Process Finished">
+      <bpmn:incoming>Flow_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_End" sourceRef="Gateway_Join_Parallel" targetRef="EndEvent_1" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="gateways_process">
+      <bpmndi:BPMNEdge id="Flow_End_di" bpmnElement="Flow_End">
+        <di:waypoint x="1005" y="277" />
+        <di:waypoint x="1062" y="277" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Join_Parallel_2_di" bpmnElement="Flow_Join_Parallel_2">
+        <di:waypoint x="900" y="380" />
+        <di:waypoint x="980" y="380" />
+        <di:waypoint x="980" y="302" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Join_Parallel_1_di" bpmnElement="Flow_Join_Parallel_1">
+        <di:waypoint x="900" y="180" />
+        <di:waypoint x="980" y="180" />
+        <di:waypoint x="980" y="252" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Parallel_Service_di" bpmnElement="Flow_Parallel_Service">
+        <di:waypoint x="710" y="302" />
+        <di:waypoint x="710" y="380" />
+        <di:waypoint x="800" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Parallel_User_di" bpmnElement="Flow_Parallel_User">
+        <di:waypoint x="710" y="252" />
+        <di:waypoint x="710" y="180" />
+        <di:waypoint x="800" y="180" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_To_Parallel_di" bpmnElement="Flow_To_Parallel">
+        <di:waypoint x="625" y="277" />
+        <di:waypoint x="685" y="277" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Join_Exclusive_2_di" bpmnElement="Flow_Join_Exclusive_2">
+        <di:waypoint x="520" y="380" />
+        <di:waypoint x="600" y="380" />
+        <di:waypoint x="600" y="302" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Join_Exclusive_1_di" bpmnElement="Flow_Join_Exclusive_1">
+        <di:waypoint x="520" y="180" />
+        <di:waypoint x="600" y="180" />
+        <di:waypoint x="600" y="252" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Exclusive_Low_di" bpmnElement="Flow_Exclusive_Low">
+        <di:waypoint x="350" y="302" />
+        <di:waypoint x="350" y="380" />
+        <di:waypoint x="420" y="380" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="354" y="343" width="60" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Exclusive_High_di" bpmnElement="Flow_Exclusive_High">
+        <di:waypoint x="350" y="252" />
+        <di:waypoint x="350" y="180" />
+        <di:waypoint x="420" y="180" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="358" y="193" width="54" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="270" y="277" />
+        <di:waypoint x="325" y="277" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="118" y="277" />
+        <di:waypoint x="170" y="277" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="82" y="259" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="61" y="302" width="79" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Init_di" bpmnElement="Activity_Init">
+        <dc:Bounds x="170" y="237" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Exclusive_di" bpmnElement="Gateway_Exclusive" isMarkerVisible="true">
+        <dc:Bounds x="325" y="252" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="385" y="270" width="87" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_High_Score_di" bpmnElement="Activity_High_Score">
+        <dc:Bounds x="420" y="140" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Low_Score_di" bpmnElement="Activity_Low_Score">
+        <dc:Bounds x="420" y="340" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Join_Exclusive_di" bpmnElement="Gateway_Join_Exclusive" isMarkerVisible="true">
+        <dc:Bounds x="575" y="252" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Parallel_di" bpmnElement="Gateway_Parallel">
+        <dc:Bounds x="685" y="252" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_User_Approve_di" bpmnElement="Activity_User_Approve">
+        <dc:Bounds x="800" y="140" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Background_Check_di" bpmnElement="Activity_Background_Check">
+        <dc:Bounds x="800" y="340" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Join_Parallel_di" bpmnElement="Gateway_Join_Parallel">
+        <dc:Bounds x="955" y="252" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_1_di" bpmnElement="EndEvent_1">
+        <dc:Bounds x="1062" y="259" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1038" y="302" width="85" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

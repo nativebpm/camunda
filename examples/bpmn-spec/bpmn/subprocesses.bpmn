@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_subprocesses" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="4.6.0">
+  <bpmn:error id="Error_Shipping_Failed" name="ShippingFailedError" errorCode="SHIPPING_FAILED" />
+  <bpmn:message id="Message_Cancel_Fulfillment" name="cancelFulfillment" />
+  
+  <bpmn:process id="subprocesses_process" name="BPMN 2.0 Subprocesses" isExecutable="true" camunda:historyTimeToLive="P180D">
+    <bpmn:startEvent id="StartEvent_1" name="Fulfillment Started">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Activity_Before_Sub" />
+    <bpmn:serviceTask id="Activity_Before_Sub" name="Initialize Order" camunda:type="external" camunda:topic="init-order">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Activity_Before_Sub" targetRef="SubProcess_Embedded" />
+    
+    <!-- Embedded Subprocess -->
+    <bpmn:subProcess id="SubProcess_Embedded" name="Order Fulfillment Subprocess">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_Success</bpmn:outgoing>
+      
+      <bpmn:startEvent id="SubStart" name="Sub Start">
+        <bpmn:outgoing>SubFlow_1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="SubFlow_1" sourceRef="SubStart" targetRef="Activity_Sub_Pack" />
+      <bpmn:serviceTask id="Activity_Sub_Pack" name="Pack Items" camunda:type="external" camunda:topic="pack-items">
+        <bpmn:incoming>SubFlow_1</bpmn:incoming>
+        <bpmn:outgoing>SubFlow_2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="SubFlow_2" sourceRef="Activity_Sub_Pack" targetRef="Activity_Sub_Ship" />
+      <bpmn:serviceTask id="Activity_Sub_Ship" name="Ship Items" camunda:type="external" camunda:topic="ship-items">
+        <bpmn:incoming>SubFlow_2</bpmn:incoming>
+        <bpmn:outgoing>SubFlow_End</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="SubEnd" name="Sub End">
+        <bpmn:incoming>SubFlow_End</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="SubFlow_End" sourceRef="Activity_Sub_Ship" targetRef="SubEnd" />
+    </bpmn:subProcess>
+    
+    <!-- Boundary Error Event on Embedded Subprocess -->
+    <bpmn:boundaryEvent id="Event_Sub_Error" name="Shipping Failed" attachedToRef="SubProcess_Embedded">
+      <bpmn:outgoing>Flow_Error_Path</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_1" errorRef="Error_Shipping_Failed" />
+    </bpmn:boundaryEvent>
+    
+    <bpmn:sequenceFlow id="Flow_Error_Path" sourceRef="Event_Sub_Error" targetRef="Activity_Refund_Customer" />
+    <bpmn:serviceTask id="Activity_Refund_Customer" name="Refund Customer" camunda:type="external" camunda:topic="refund-customer">
+      <bpmn:incoming>Flow_Error_Path</bpmn:incoming>
+      <bpmn:outgoing>Flow_Error_End</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Event_Sub_Error_End" name="Failed Fulfillment End">
+      <bpmn:incoming>Flow_Error_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Error_End" sourceRef="Activity_Refund_Customer" targetRef="Event_Sub_Error_End" />
+    
+    <bpmn:endEvent id="EndEvent_Success" name="Fulfillment Completed">
+      <bpmn:incoming>Flow_Success</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Success" sourceRef="SubProcess_Embedded" targetRef="EndEvent_Success" />
+    
+    <!-- Event Subprocess (Non-interrupting message trigger or interrupting: let's do interrupting) -->
+    <bpmn:subProcess id="SubProcess_Event" name="Cancel Handler" triggeredByEvent="true">
+      <bpmn:startEvent id="EventSubStart" name="Cancel Req" isInterrupting="true">
+        <bpmn:outgoing>EventSubFlow_1</bpmn:outgoing>
+        <bpmn:messageEventDefinition id="MessageEventDefinition_2" messageRef="Message_Cancel_Fulfillment" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="EventSubFlow_1" sourceRef="EventSubStart" targetRef="Activity_Cancel_Release" />
+      <bpmn:serviceTask id="Activity_Cancel_Release" name="Release Stock" camunda:type="external" camunda:topic="release-stock">
+        <bpmn:incoming>EventSubFlow_1</bpmn:incoming>
+        <bpmn:outgoing>EventSubFlow_End</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EventSubEnd" name="Aborted End">
+        <bpmn:incoming>EventSubFlow_End</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="EventSubFlow_End" sourceRef="Activity_Cancel_Release" targetRef="EventSubEnd" />
+    </bpmn:subProcess>
+  </bpmn:process>
+  
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="subprocesses_process">
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="188" y="220" />
+        <di:waypoint x="240" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="340" y="220" />
+        <di:waypoint x="390" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Success_di" bpmnElement="Flow_Success">
+        <di:waypoint x="850" y="220" />
+        <di:waypoint x="912" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Error_Path_di" bpmnElement="Flow_Error_Path">
+        <di:waypoint x="760" y="328" />
+        <di:waypoint x="760" y="390" />
+        <di:waypoint x="820" y="390" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Error_End_di" bpmnElement="Flow_Error_End">
+        <di:waypoint x="920" y="390" />
+        <di:waypoint x="972" y="390" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="152" y="202" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="146" y="245" width="49" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Before_Sub_di" bpmnElement="Activity_Before_Sub">
+        <dc:Bounds x="240" y="180" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_Success_di" bpmnElement="EndEvent_Success">
+        <dc:Bounds x="912" y="202" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="903" y="245" width="54" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Refund_Customer_di" bpmnElement="Activity_Refund_Customer">
+        <dc:Bounds x="820" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Sub_Error_End_di" bpmnElement="Event_Sub_Error_End">
+        <dc:Bounds x="972" y="372" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="950" y="415" width="81" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      
+      <!-- Subprocess shape -->
+      <bpmndi:BPMNShape id="SubProcess_Embedded_di" bpmnElement="SubProcess_Embedded" isExpanded="true">
+        <dc:Bounds x="390" y="100" width="460" height="210" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="SubFlow_1_di" bpmnElement="SubFlow_1">
+        <di:waypoint x="458" y="210" />
+        <di:waypoint x="500" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="SubFlow_2_di" bpmnElement="SubFlow_2">
+        <di:waypoint x="600" y="210" />
+        <di:waypoint x="640" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="SubFlow_End_di" bpmnElement="SubFlow_End">
+        <di:waypoint x="740" y="210" />
+        <di:waypoint x="782" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="SubStart_di" bpmnElement="SubStart">
+        <dc:Bounds x="422" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Sub_Pack_di" bpmnElement="Activity_Sub_Pack">
+        <dc:Bounds x="500" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Sub_Ship_di" bpmnElement="Activity_Sub_Ship">
+        <dc:Bounds x="640" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubEnd_di" bpmnElement="SubEnd">
+        <dc:Bounds x="782" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      
+      <!-- Event Boundary shape -->
+      <bpmndi:BPMNShape id="Event_Sub_Error_di" bpmnElement="Event_Sub_Error">
+        <dc:Bounds x="742" y="292" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="772" y="323" width="76" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      
+      <!-- Event Subprocess shape -->
+      <bpmndi:BPMNShape id="SubProcess_Event_di" bpmnElement="SubProcess_Event" isExpanded="true">
+        <dc:Bounds x="240" y="470" width="460" height="180" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="EventSubFlow_1_di" bpmnElement="EventSubFlow_1">
+        <di:waypoint x="308" y="560" />
+        <di:waypoint x="360" y="560" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="EventSubFlow_End_di" bpmnElement="EventSubFlow_End">
+        <di:waypoint x="460" y="560" />
+        <di:waypoint x="522" y="560" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="EventSubStart_di" bpmnElement="EventSubStart">
+        <dc:Bounds x="272" y="542" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="262" y="585" width="57" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Cancel_Release_di" bpmnElement="Activity_Cancel_Release">
+        <dc:Bounds x="360" y="520" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EventSubEnd_di" bpmnElement="EventSubEnd">
+        <dc:Bounds x="522" y="542" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="510" y="585" width="62" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -35,5 +35,5 @@ sinks:
     destination:
       type: "sequin_stream"
     source:
-      include_schemas:
-        - "public"
+      include_tables:
+        - "public.act_ru_ext_task"

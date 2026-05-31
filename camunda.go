@@ -28,7 +28,15 @@ type Client struct {
 // NewClient creates a new Camunda external task client
 func NewClient(hostURL, workerID string) (*Client, error) {
 	baseURL := hostURL + "/engine-rest"
-	httpClient, err := httpstream.NewClient(&http.Client{Timeout: 30 * time.Second}, baseURL)
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	httpClient, err := httpstream.NewClient(&http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}, baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
 	}
@@ -60,6 +68,14 @@ func (c *Client) Failure(taskID string) *TaskFailure {
 	return tasks.NewTaskFailure(c.httpClient, c.workerID, taskID)
 }
 
+// TaskBpmnError provides a fluent API for reporting BPMN errors
+type TaskBpmnError = tasks.TaskBpmnError
+
+// BpmnError creates a new TaskBpmnError builder
+func (c *Client) BpmnError(taskID, errorCode, errorMessage string) *TaskBpmnError {
+	return tasks.NewTaskBpmnError(c.httpClient, c.workerID, taskID, errorCode, errorMessage)
+}
+
 // LockExtension provides a fluent API for extending task locks
 type LockExtension = tasks.LockExtension
 
@@ -74,6 +90,41 @@ type TaskUnlock = tasks.TaskUnlock
 // Unlock creates a new TaskUnlock builder
 func (c *Client) Unlock(taskID string) *TaskUnlock {
 	return tasks.NewTaskUnlock(c.httpClient, c.workerID, taskID)
+}
+
+// TaskLock provides a fluent API for locking tasks
+type TaskLock = tasks.TaskLock
+
+// Lock creates a new TaskLock builder
+func (c *Client) Lock(taskID string, duration int) *TaskLock {
+	return tasks.NewTaskLock(c.httpClient, c.workerID, taskID, duration)
+}
+
+// GetProcessVariables retrieves all variables of a process instance from Camunda REST API
+func (c *Client) GetProcessVariables(ctx context.Context, processInstanceID string) (map[string]Variable, error) {
+	resp, err := c.httpClient.GET(ctx, "/process-instance/{id}/variables").
+		PathParam("id", processInstanceID).
+		Send()
+	if err != nil {
+		return nil, fmt.Errorf("failed to send get variables request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get variables request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var variables map[string]Variable
+	if err := json.Unmarshal(body, &variables); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal variables: %w", err)
+	}
+
+	return variables, nil
 }
 
 // StartProcessInstance starts a process instance and sets the businessKey

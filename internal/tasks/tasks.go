@@ -429,3 +429,144 @@ func (tu *TaskUnlock) Execute() error {
 
 	return nil
 }
+
+// TaskLock provides a fluent API for locking tasks
+type TaskLock struct {
+	httpClient *httpstream.Client
+	workerID   string
+	ctx        context.Context
+	taskID     string
+	duration   int
+}
+
+// NewTaskLock creates a new TaskLock builder
+func NewTaskLock(httpClient *httpstream.Client, workerID, taskID string, duration int) *TaskLock {
+	return &TaskLock{
+		httpClient: httpClient,
+		workerID:   workerID,
+		ctx:        context.Background(),
+		taskID:     taskID,
+		duration:   duration,
+	}
+}
+
+// Context sets the context for the lock request
+func (tl *TaskLock) Context(ctx context.Context) *TaskLock {
+	tl.ctx = ctx
+	return tl
+}
+
+// Execute sends the lock request
+func (tl *TaskLock) Execute() error {
+	req := struct {
+		WorkerID     string `json:"workerId"`
+		LockDuration int    `json:"lockDuration"`
+	}{
+		WorkerID:     tl.workerID,
+		LockDuration: tl.duration,
+	}
+
+	resp, err := tl.httpClient.POST(tl.ctx, "/external-task/{taskID}/lock").
+		PathParam("taskID", tl.taskID).
+		JSON(req).
+		Send()
+	if err != nil {
+		return fmt.Errorf("failed to send lock request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("lock request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// TaskBpmnError provides a fluent API for reporting BPMN errors
+type TaskBpmnError struct {
+	httpClient   *httpstream.Client
+	workerID     string
+	ctx          context.Context
+	taskID       string
+	errorCode    string
+	errorMessage string
+	variables    map[string]vars.Variable
+}
+
+// NewTaskBpmnError creates a new TaskBpmnError builder
+func NewTaskBpmnError(httpClient *httpstream.Client, workerID, taskID, errorCode, errorMessage string) *TaskBpmnError {
+	return &TaskBpmnError{
+		httpClient:   httpClient,
+		workerID:     workerID,
+		ctx:          context.Background(),
+		taskID:       taskID,
+		errorCode:    errorCode,
+		errorMessage: errorMessage,
+		variables:    make(map[string]vars.Variable),
+	}
+}
+
+// Context sets the context for the BPMN error request
+func (te *TaskBpmnError) Context(ctx context.Context) *TaskBpmnError {
+	te.ctx = ctx
+	return te
+}
+
+// StringVariable adds a string variable to the BPMN error request
+func (te *TaskBpmnError) StringVariable(name, value string) *TaskBpmnError {
+	te.variables[name] = vars.StringVariable(value)
+	return te
+}
+
+// IntVariable adds an int variable to the BPMN error request
+func (te *TaskBpmnError) IntVariable(name string, value int) *TaskBpmnError {
+	te.variables[name] = vars.IntVariable(value)
+	return te
+}
+
+// BooleanVariable adds a boolean variable to the BPMN error request
+func (te *TaskBpmnError) BooleanVariable(name string, value bool) *TaskBpmnError {
+	te.variables[name] = vars.BooleanVariable(value)
+	return te
+}
+
+// Execute sends the BPMN error request
+func (te *TaskBpmnError) Execute() error {
+	req := struct {
+		WorkerID     string                   `json:"workerId"`
+		ErrorCode    string                   `json:"errorCode"`
+		ErrorMessage string                   `json:"errorMessage,omitempty"`
+		Variables    map[string]vars.Variable `json:"variables,omitempty"`
+	}{
+		WorkerID:     te.workerID,
+		ErrorCode:    te.errorCode,
+		ErrorMessage: te.errorMessage,
+		Variables:    te.variables,
+	}
+
+	resp, err := te.httpClient.POST(te.ctx, "/external-task/{taskID}/bpmnError").
+		PathParam("taskID", te.taskID).
+		JSON(req).
+		Send()
+	if err != nil {
+		return fmt.Errorf("failed to send bpmnError request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("bpmnError request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+

@@ -3,25 +3,24 @@ package camunda
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/nativebpm/camunda/internal/tasks"
 )
 
 // SequinWorker processes Camunda external tasks using logical replication logs from Sequin
-// instead of polling via fetchAndLock. It performs atomic direct DB locks to achieve high-performance CDC.
+// instead of polling via fetchAndLock. It performs task locking and variables fetching
+// via official REST API, achieving clean architecture separation without direct DB access.
 type SequinWorker struct {
 	client     *Client
-	db         *sql.DB
 	sequinURL  string
 	consumer   string
 	apiToken   string
@@ -48,24 +47,9 @@ type sequinReceiveResponse struct {
 }
 
 // NewSequinWorker creates a new Sequin logical replication worker
-func NewSequinWorker(client *Client, dbDSN string, sequinURL string, consumer string, logger *slog.Logger) (*SequinWorker, error) {
+func NewSequinWorker(client *Client, sequinURL string, consumer string, logger *slog.Logger) (*SequinWorker, error) {
 	if logger == nil {
 		logger = slog.Default()
-	}
-
-	db, err := sql.Open("postgres", dbDSN)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Camunda DB: %w", err)
-	}
-
-	// Optimize DB connection pool
-	db.SetMaxOpenConns(50)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(30 * time.Minute)
-
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to ping Camunda DB: %w", err)
 	}
 
 	token := os.Getenv("SEQUIN_API_TOKEN")
@@ -73,16 +57,24 @@ func NewSequinWorker(client *Client, dbDSN string, sequinURL string, consumer st
 		token = "sequin_loadtest_secret_token_12345"
 	}
 
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	return &SequinWorker{
 		client:     client,
-		db:         db,
 		sequinURL:  sequinURL,
 		consumer:   consumer,
 		apiToken:   token,
 		logger:     logger,
 		handlers:   make(map[string]TaskHandler),
 		workerID:   client.workerID,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{
+			Transport: transport,
+			Timeout:   10 * time.Second,
+		},
 	}, nil
 }
 
@@ -106,7 +98,6 @@ func (sw *SequinWorker) Start(ctx context.Context) {
 		case <-ctx.Done():
 			sw.logger.Info("Context cancelled, waiting for active tasks to complete...")
 			sw.wg.Wait()
-			sw.db.Close()
 			return
 		default:
 			msgs, err := sw.receiveMessages(ctx)
@@ -190,11 +181,31 @@ func (sw *SequinWorker) ackMessage(ctx context.Context, ackID string) {
 	resp.Body.Close()
 }
 
-func (sw *SequinWorker) processMessage(ctx context.Context, msg sequinMessage) {
-	// Always ACK the message from Sequin at the end to prevent redelivery
-	defer sw.ackMessage(context.Background(), msg.AckID)
+func (sw *SequinWorker) nackMessage(ctx context.Context, ackID string) {
+	url := fmt.Sprintf("%s/api/http_pull_consumers/%s/nack", sw.sequinURL, sw.consumer)
+	reqBody, _ := json.Marshal(map[string]any{
+		"ack_ids": []string{ackID},
+	})
 
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
+	if err != nil {
+		sw.logger.Error("Failed to build nack request", "error", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+sw.apiToken)
+
+	resp, err := sw.httpClient.Do(req)
+	if err != nil {
+		sw.logger.Error("Failed to send nack to Sequin", "error", err)
+		return
+	}
+	resp.Body.Close()
+}
+
+func (sw *SequinWorker) processMessage(ctx context.Context, msg sequinMessage) {
 	if msg.Payload.Action == "delete" {
+		sw.ackMessage(context.Background(), msg.AckID)
 		return
 	}
 
@@ -208,52 +219,37 @@ func (sw *SequinWorker) processMessage(ctx context.Context, msg sequinMessage) {
 
 	if taskID == "" || topicName == "" {
 		sw.logger.Warn("Ignored task due to missing ID or topic", "task_id", taskID, "topic", topicName)
+		sw.ackMessage(context.Background(), msg.AckID)
 		return
 	}
 
 	handler, ok := sw.handlers[topicName]
 	if !ok {
-		// No handler registered for this topic
+		// No handler registered for this topic, ack to remove from queue
+		sw.ackMessage(context.Background(), msg.AckID)
 		return
 	}
 
-	// 1. Try to lock the task directly in the database (logical locking mechanism)
-	lockDuration := 5 * time.Minute
-	lockExpiration := time.Now().Add(lockDuration)
+	// 1. Lock the task using Camunda REST API
+	lockDurationMs := 30000 // 30 seconds
+	lockExpiration := time.Now().Add(30 * time.Second)
 
-	// In Camunda 7 Postgres schema, column names are id_, topic_name_, lock_exp_time_, worker_id_, retries_
-	query := `
-		UPDATE act_ru_ext_task 
-		SET lock_exp_time_ = $1, 
-		    worker_id_ = $2, 
-		    retries_ = $3 
-		WHERE id_ = $4 AND (lock_exp_time_ IS NULL OR lock_exp_time_ < NOW())`
-
-	res, err := sw.db.ExecContext(ctx, query, lockExpiration, sw.workerID, 3, taskID)
+	err := sw.client.Lock(taskID, lockDurationMs).Context(ctx).Execute()
 	if err != nil {
-		sw.logger.Error("Failed to lock task in Camunda DB", "task_id", taskID, "error", err)
+		// If the lock failed (e.g. task was already completed or deleted in Camunda)
+		// we should ack the message to discard it.
+		sw.logger.Warn("Failed to acquire lock via REST API (task might be completed, deleted, or locked)", "task_id", taskID, "error", err)
+		sw.ackMessage(context.Background(), msg.AckID)
 		return
 	}
 
-	rows, err := res.RowsAffected()
+	sw.logger.Info("Logical CDC lock acquired on task via REST", "task_id", taskID, "topic", topicName)
+
+	// 2. Query process variables via Camunda REST API
+	variables, err := sw.client.GetProcessVariables(ctx, procInstID)
 	if err != nil {
-		sw.logger.Error("Failed to get rows affected during lock", "task_id", taskID, "error", err)
-		return
-	}
-	if rows == 0 {
-		sw.logger.Warn("Task already locked or completed (0 rows affected)", "task_id", taskID)
-		return
-	}
-
-
-	sw.logger.Info("Logical CDC lock acquired on task", "task_id", taskID, "topic", topicName)
-
-	// 2. Query process variables directly from the DB to build type-safe ExternalTask variables
-	variables, err := sw.queryVariables(ctx, procInstID, executionID)
-	if err != nil {
-		sw.logger.Error("Failed to fetch process variables for task", "task_id", taskID, "error", err)
-		// Try to unlock so it can be retried
-		_, _ = sw.db.ExecContext(context.Background(), "UPDATE act_ru_ext_task SET lock_exp_time_ = NULL, worker_id_ = NULL WHERE id_ = $1", taskID)
+		sw.logger.Error("Failed to fetch process variables for task via REST", "task_id", taskID, "error", err)
+		sw.nackMessage(context.Background(), msg.AckID)
 		return
 	}
 
@@ -287,66 +283,15 @@ func (sw *SequinWorker) processMessage(ctx context.Context, msg sequinMessage) {
 	// 5. Execute handler
 	if err := handler.Handle(ctx, sw.client, task, complete, fail); err != nil {
 		sw.logger.Error("Task handler returned error", "task_id", taskID, "error", err)
-		_ = fail(err.Error(), "Handler error", 0, 0)
+		if strings.Contains(err.Error(), "OptimisticLockingException") {
+			sw.logger.Warn("Optimistic locking collision during task execution, nacking in Sequin to retry", "task_id", taskID)
+			sw.nackMessage(context.Background(), msg.AckID)
+		} else {
+			_ = fail(err.Error(), "Handler error", 0, 0)
+			sw.ackMessage(context.Background(), msg.AckID)
+		}
 	} else {
 		sw.logger.Info("Task processed successfully via Sequin", "task_id", taskID)
+		sw.ackMessage(context.Background(), msg.AckID)
 	}
-}
-
-func (sw *SequinWorker) queryVariables(ctx context.Context, procInstID, executionID string) (map[string]Variable, error) {
-	// Query variables from act_ru_variable. We pull both process instance scope and execution local scope
-	query := `
-		SELECT name_, type_, text_, double_, long_ 
-		FROM act_ru_variable 
-		WHERE proc_inst_id_ = $1 OR execution_id_ = $2`
-
-	rows, err := sw.db.QueryContext(ctx, query, procInstID, executionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	variables := make(map[string]Variable)
-	for rows.Next() {
-		var name, varType string
-		var textVal sql.NullString
-		var doubleVal sql.NullFloat64
-		var longVal sql.NullInt64
-
-		if err := rows.Scan(&name, &varType, &textVal, &doubleVal, &longVal); err != nil {
-			return nil, err
-		}
-
-		var value any
-		switch varType {
-		case "string":
-			if textVal.Valid {
-				value = textVal.String
-			}
-		case "integer", "long":
-			if longVal.Valid {
-				value = float64(longVal.Int64) // JSON variables wrapper parses integers as float64
-			}
-		case "double":
-			if doubleVal.Valid {
-				value = doubleVal.Float64
-			}
-		case "boolean":
-			if longVal.Valid {
-				value = longVal.Int64 == 1
-			}
-		default:
-			// Fallback text
-			if textVal.Valid {
-				value = textVal.String
-			}
-		}
-
-		variables[name] = Variable{
-			Type:  varType,
-			Value: value,
-		}
-	}
-
-	return variables, nil
 }

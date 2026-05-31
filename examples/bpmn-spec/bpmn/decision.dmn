@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
+             xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/"
+             xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
+             xmlns:camunda="http://camunda.org/schema/1.0/dmn"
+             id="Definitions_discount"
+             name="DRD"
+             namespace="http://camunda.org/schema/1.0/dmn"
+             exporter="Camunda Modeler"
+             exporterVersion="4.6.0">
+  <decision id="determine_discount" name="Determine Discount" camunda:historyTimeToLive="P180D">
+    <decisionTable id="DecisionTable_1" hitPolicy="UNIQUE">
+      <input id="Input_1" label="Membership Level">
+        <inputExpression id="InputExpression_1" typeRef="string">
+          <text>membership</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Discount Percentage" name="discount" typeRef="number" />
+      <rule id="DecisionRule_1">
+        <inputEntry id="UnaryTests_1">
+          <text>"gold"</text>
+        </inputEntry>
+        <outputEntry id="LiteralExpression_1">
+          <text>20</text>
+        </outputEntry>
+      </rule>
+      <rule id="DecisionRule_2">
+        <inputEntry id="UnaryTests_2">
+          <text>"silver"</text>
+        </inputEntry>
+        <outputEntry id="LiteralExpression_2">
+          <text>10</text>
+        </outputEntry>
+      </rule>
+      <rule id="DecisionRule_3">
+        <inputEntry id="UnaryTests_3">
+          <text>"bronze"</text>
+        </inputEntry>
+        <outputEntry id="LiteralExpression_3">
+          <text>5</text>
+        </outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <dmndi:DMNDI>
+    <dmndi:DMNDiagram>
+      <dmndi:DMNShape dmnElementRef="determine_discount">
+        <dc:Bounds height="80" width="180" x="160" y="80" />
+      </dmndi:DMNShape>
+    </dmndi:DMNDiagram>
+  </dmndi:DMNDI>
+</definitions>

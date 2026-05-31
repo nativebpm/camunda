@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,10 @@ var (
 	completedChecker  atomic.Int64
 	completedDecision atomic.Int64 // tracks loanGranter + requestRejecter completes
 	failedTasks       atomic.Int64
+
+	startTimes  sync.Map
+	durationsMu sync.Mutex
+	durations   []time.Duration
 )
 
 func main() {
@@ -111,10 +116,6 @@ func main() {
 	var normalWorker *camunda.Worker
 
 	if useSequin {
-		dbDSN := os.Getenv("DB_DSN")
-		if dbDSN == "" {
-			dbDSN = "postgres://camunda:camunda@localhost:7477/process-engine?sslmode=disable"
-		}
 		sequinURL := os.Getenv("SEQUIN_URL")
 		if sequinURL == "" {
 			sequinURL = "http://localhost:7376"
@@ -125,7 +126,7 @@ func main() {
 		}
 
 		var err error
-		sequinWorker, err = camunda.NewSequinWorker(client, dbDSN, sequinURL, sequinConsumer, logger)
+		sequinWorker, err = camunda.NewSequinWorker(client, sequinURL, sequinConsumer, logger)
 		if err != nil {
 			logger.Error("Failed to create Sequin worker", "error", err)
 			return
@@ -159,6 +160,14 @@ func main() {
 			failedTasks.Add(1)
 			return err
 		}
+		if startVal, ok := startTimes.Load(task.ProcessInstanceID); ok {
+			if startTime, ok := startVal.(time.Time); ok {
+				durationsMu.Lock()
+				durations = append(durations, time.Since(startTime))
+				durationsMu.Unlock()
+				startTimes.Delete(task.ProcessInstanceID)
+			}
+		}
 		decVal := completedDecision.Add(1)
 		if decVal >= expectedDecisions {
 			select {
@@ -175,6 +184,14 @@ func main() {
 		if err != nil {
 			failedTasks.Add(1)
 			return err
+		}
+		if startVal, ok := startTimes.Load(task.ProcessInstanceID); ok {
+			if startTime, ok := startVal.(time.Time); ok {
+				durationsMu.Lock()
+				durations = append(durations, time.Since(startTime))
+				durationsMu.Unlock()
+				startTimes.Delete(task.ProcessInstanceID)
+			}
 		}
 		decVal := completedDecision.Add(1)
 		if decVal >= expectedDecisions {
@@ -218,11 +235,12 @@ func main() {
 				"employmentYears": camunda.IntVariable(rand.Intn(10)),
 			}
 
-			_, err := client.StartProcessInstance(ctx, "loan_process", businessKey, varsMap)
+			instanceID, err := client.StartProcessInstance(ctx, "loan_process", businessKey, varsMap)
 			if err != nil {
 				failedTasks.Add(1)
 				return
 			}
+			startTimes.Store(instanceID, time.Now())
 			startedInstances.Add(1)
 
 			if submissionDelayMs > 0 {
@@ -244,6 +262,39 @@ func main() {
 	<-doneChan
 	totalDuration := time.Since(startTime)
 
+	// Sort durations to calculate percentiles
+	durationsMu.Lock()
+	sort.Slice(durations, func(i, j int) bool {
+		return durations[i] < durations[j]
+	})
+
+	p50 := time.Duration(0)
+	p90 := time.Duration(0)
+	p95 := time.Duration(0)
+	p99 := time.Duration(0)
+	avg := time.Duration(0)
+
+	if len(durations) > 0 {
+		var total time.Duration
+		for _, d := range durations {
+			total += d
+		}
+		avg = total / time.Duration(len(durations))
+
+		getPercentile := func(pct float64) time.Duration {
+			idx := int(float64(len(durations)) * pct / 100.0)
+			if idx >= len(durations) {
+				idx = len(durations) - 1
+			}
+			return durations[idx]
+		}
+		p50 = getPercentile(50)
+		p90 = getPercentile(90)
+		p95 = getPercentile(95)
+		p99 = getPercentile(99)
+	}
+	durationsMu.Unlock()
+
 	// Clean up deployment at the end to keep the db stateless
 	_ = client.DeleteDeployment(context.Background(), deploymentID, true)
 	logger.Info("Cleaned up deployment successfully", "deployment_id", deploymentID)
@@ -258,6 +309,11 @@ func main() {
 		"failed_tasks", failedTasks.Load(),
 		"throughput_rps", fmt.Sprintf("%.2f", float64(totalProcesses)/totalDuration.Seconds()),
 		"task_throughput_tps", fmt.Sprintf("%.2f", float64(completedChecker.Load()+completedDecision.Load())/totalDuration.Seconds()),
+		"p50_latency_ms", p50.Milliseconds(),
+		"p90_latency_ms", p90.Milliseconds(),
+		"p95_latency_ms", p95.Milliseconds(),
+		"p99_latency_ms", p99.Milliseconds(),
+		"avg_latency_ms", avg.Milliseconds(),
 	)
 }
 

@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_events" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="4.6.0">
+  <bpmn:error id="Error_Payment_Failed" name="PaymentFailedError" errorCode="PAYMENT_FAILED" />
+  <bpmn:message id="Message_Cancel_Order" name="cancelOrder" />
+  
+  <bpmn:process id="events_process" name="BPMN 2.0 Events" isExecutable="true" camunda:historyTimeToLive="P180D">
+    <bpmn:startEvent id="StartEvent_1" name="Order Received">
+      <bpmn:outgoing>Flow_Start</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_Start" sourceRef="StartEvent_1" targetRef="Activity_Process_Order" />
+    
+    <bpmn:userTask id="Activity_Process_Order" name="Process Order">
+      <bpmn:incoming>Flow_Start</bpmn:incoming>
+      <bpmn:outgoing>Flow_Order_Processed</bpmn:outgoing>
+    </bpmn:userTask>
+    
+    <!-- Boundary Timer Event (Non-interrupting option or interrupting: let's do interrupting for simplicity) -->
+    <bpmn:boundaryEvent id="Event_Boundary_Timer" name="2 Minute Timeout" attachedToRef="Activity_Process_Order">
+      <bpmn:outgoing>Flow_Timeout</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerEventDefinition_1">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT2M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    
+    <!-- Boundary Message Event (Interrupting) -->
+    <bpmn:boundaryEvent id="Event_Boundary_Message" name="Order Cancelled Msg" attachedToRef="Activity_Process_Order">
+      <bpmn:outgoing>Flow_Cancel</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="MessageEventDefinition_1" messageRef="Message_Cancel_Order" />
+    </bpmn:boundaryEvent>
+    
+    <bpmn:sequenceFlow id="Flow_Timeout" sourceRef="Event_Boundary_Timer" targetRef="Activity_Timeout_Escalate" />
+    <bpmn:serviceTask id="Activity_Timeout_Escalate" name="Escalate Timeout" camunda:type="external" camunda:topic="escalate-timeout">
+      <bpmn:incoming>Flow_Timeout</bpmn:incoming>
+      <bpmn:outgoing>Flow_Timeout_End</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Event_Timeout_End" name="Escalated End">
+      <bpmn:incoming>Flow_Timeout_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Timeout_End" sourceRef="Activity_Timeout_Escalate" targetRef="Event_Timeout_End" />
+    
+    <bpmn:sequenceFlow id="Flow_Cancel" sourceRef="Event_Boundary_Message" targetRef="Activity_Cancel_Cleanup" />
+    <bpmn:serviceTask id="Activity_Cancel_Cleanup" name="Cleanup Cancelled Order" camunda:type="external" camunda:topic="cancel-cleanup">
+      <bpmn:incoming>Flow_Cancel</bpmn:incoming>
+      <bpmn:outgoing>Flow_Cancelled_End</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Event_Cancelled_End" name="Cancelled End">
+      <bpmn:incoming>Flow_Cancelled_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Cancelled_End" sourceRef="Activity_Cancel_Cleanup" targetRef="Event_Cancelled_End" />
+    
+    <bpmn:sequenceFlow id="Flow_Order_Processed" sourceRef="Activity_Process_Order" targetRef="Activity_Process_Payment" />
+    
+    <bpmn:serviceTask id="Activity_Process_Payment" name="Process Payment" camunda:type="external" camunda:topic="process-payment">
+      <bpmn:incoming>Flow_Order_Processed</bpmn:incoming>
+      <bpmn:outgoing>Flow_Payment_Success</bpmn:outgoing>
+    </bpmn:serviceTask>
+    
+    <!-- Boundary Error Event -->
+    <bpmn:boundaryEvent id="Event_Boundary_Error" name="Payment Failed" attachedToRef="Activity_Process_Payment">
+      <bpmn:outgoing>Flow_Payment_Error</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_1" errorRef="Error_Payment_Failed" />
+    </bpmn:boundaryEvent>
+    
+    <bpmn:sequenceFlow id="Flow_Payment_Error" sourceRef="Event_Boundary_Error" targetRef="Activity_Payment_Failed_Handle" />
+    <bpmn:serviceTask id="Activity_Payment_Failed_Handle" name="Handle Payment Failure" camunda:type="external" camunda:topic="handle-payment-failure">
+      <bpmn:incoming>Flow_Payment_Error</bpmn:incoming>
+      <bpmn:outgoing>Flow_Payment_Failed_End</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Event_Payment_Failed_End" name="Failed End">
+      <bpmn:incoming>Flow_Payment_Failed_End</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Payment_Failed_End" sourceRef="Activity_Payment_Failed_Handle" targetRef="Event_Payment_Failed_End" />
+    
+    <bpmn:endEvent id="EndEvent_Success" name="Order Completed">
+      <bpmn:incoming>Flow_Payment_Success</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Payment_Success" sourceRef="Activity_Process_Payment" targetRef="EndEvent_Success" />
+  </bpmn:process>
+  
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="events_process">
+      <bpmndi:BPMNEdge id="Flow_Start_di" bpmnElement="Flow_Start">
+        <di:waypoint x="188" y="220" />
+        <di:waypoint x="260" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Order_Processed_di" bpmnElement="Flow_Order_Processed">
+        <di:waypoint x="360" y="220" />
+        <di:waypoint x="460" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Payment_Success_di" bpmnElement="Flow_Payment_Success">
+        <di:waypoint x="560" y="220" />
+        <di:waypoint x="662" y="220" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Timeout_di" bpmnElement="Flow_Timeout">
+        <di:waypoint x="310" y="162" />
+        <di:waypoint x="310" y="100" />
+        <di:waypoint x="390" y="100" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Timeout_End_di" bpmnElement="Flow_Timeout_End">
+        <di:waypoint x="490" y="100" />
+        <di:waypoint x="562" y="100" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cancel_di" bpmnElement="Flow_Cancel">
+        <di:waypoint x="330" y="278" />
+        <di:waypoint x="330" y="340" />
+        <di:waypoint x="390" y="340" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cancelled_End_di" bpmnElement="Flow_Cancelled_End">
+        <di:waypoint x="490" y="340" />
+        <di:waypoint x="562" y="340" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Payment_Error_di" bpmnElement="Flow_Payment_Error">
+        <di:waypoint x="510" y="278" />
+        <di:waypoint x="510" y="340" />
+        <di:waypoint x="600" y="340" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Payment_Failed_End_di" bpmnElement="Flow_Payment_Failed_End">
+        <di:waypoint x="700" y="340" />
+        <di:waypoint x="772" y="340" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="152" y="202" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="132" y="245" width="77" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Process_Order_di" bpmnElement="Activity_Process_Order">
+        <dc:Bounds x="260" y="180" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Process_Payment_di" bpmnElement="Activity_Process_Payment">
+        <dc:Bounds x="460" y="180" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_Success_di" bpmnElement="EndEvent_Success">
+        <dc:Bounds x="662" y="202" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="638" y="245" width="84" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Timeout_Escalate_di" bpmnElement="Activity_Timeout_Escalate">
+        <dc:Bounds x="390" y="60" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Timeout_End_di" bpmnElement="Event_Timeout_End">
+        <dc:Bounds x="562" y="82" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="546" y="125" width="71" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Cancel_Cleanup_di" bpmnElement="Activity_Cancel_Cleanup">
+        <dc:Bounds x="390" y="300" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Cancelled_End_di" bpmnElement="Event_Cancelled_End">
+        <dc:Bounds x="562" y="322" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="544" y="365" width="72" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_Payment_Failed_Handle_di" bpmnElement="Activity_Payment_Failed_Handle">
+        <dc:Bounds x="600" y="300" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Payment_Failed_End_di" bpmnElement="Event_Payment_Failed_End">
+        <dc:Bounds x="772" y="322" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="764" y="365" width="53" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Boundary_Timer_di" bpmnElement="Event_Boundary_Timer">
+        <dc:Bounds x="292" y="162" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="328" y="143" width="84" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Boundary_Message_di" bpmnElement="Event_Boundary_Message">
+        <dc:Bounds x="312" y="242" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="340" y="276" width="79" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Boundary_Error_di" bpmnElement="Event_Boundary_Error">
+        <dc:Bounds x="492" y="242" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="522" y="273" width="76" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
