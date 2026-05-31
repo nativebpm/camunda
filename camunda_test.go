@@ -3,6 +3,7 @@ package camunda
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,10 +13,11 @@ import (
 )
 
 func TestNewClient(t *testing.T) {
+	logger := slog.Default()
 	baseURL := "http://localhost:8080/engine-rest"
 	workerID := "test-worker"
 
-	client, err := NewClient(baseURL, workerID)
+	client, err := NewClient(baseURL, workerID, logger)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -43,7 +45,7 @@ func TestStringVariable(t *testing.T) {
 }
 
 func TestIntVariable(t *testing.T) {
-	value := int64(42)
+	value := int(42)
 	v := IntVariable(value)
 
 	if v.Value != value {
@@ -56,7 +58,7 @@ func TestIntVariable(t *testing.T) {
 }
 
 func TestLongVariable(t *testing.T) {
-	value := int64(123456789)
+	value := int(123456789)
 	v := LongVariable(value)
 
 	if v.Value != value {
@@ -98,7 +100,8 @@ func TestDateVariable(t *testing.T) {
 	value := time.Date(2023, 10, 1, 12, 0, 0, 0, time.UTC)
 	v := DateVariable(value)
 
-	expected := value.Format(time.RFC3339)
+	// Expected format: 2006-01-02T15:04:05.000-0700 (milliseconds + timezone without colon)
+	expected := value.Format("2006-01-02T15:04:05.000-0700")
 	if v.Value != expected {
 		t.Errorf("expected value %s, got %v", expected, v.Value)
 	}
@@ -355,7 +358,7 @@ func BenchmarkStringVariable(b *testing.B) {
 }
 
 func BenchmarkIntVariable(b *testing.B) {
-	value := int64(12345)
+	value := int(12345)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = IntVariable(value)
@@ -406,7 +409,7 @@ func BenchmarkNewClient(b *testing.B) {
 	workerID := "test-worker"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = NewClient(baseURL, workerID)
+		_, _ = NewClient(baseURL, workerID, slog.Default())
 	}
 }
 
@@ -438,17 +441,16 @@ func BenchmarkFetchAndLockRequestMarshal(b *testing.B) {
 }
 
 func BenchmarkCompleteRequestMarshal(b *testing.B) {
-	variables := map[string]Variable{
-		"var1": StringVariable("value1"),
-		"var2": IntVariable(42),
-	}
+	vb := NewVariables()
+	vb.String("var1", "value1")
+	vb.Int("var2", 42)
 	req := struct {
 		WorkerID       string              `json:"workerId"`
 		Variables      map[string]Variable `json:"variables,omitempty"`
 		LocalVariables map[string]Variable `json:"localVariables,omitempty"`
 	}{
 		WorkerID:  "test-worker",
-		Variables: variables,
+		Variables: vb.Variables(),
 	}
 
 	b.ResetTimer()

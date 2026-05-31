@@ -1,20 +1,23 @@
-package builder
+package tasks
 
 import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
+	"math/rand"
 	"net/http"
+	"strings"
+	"time"
 
+	"github.com/nativebpm/camunda/internal/vars"
 	"github.com/nativebpm/httpclient"
 )
 
-// Variable represents a Camunda variable with type safety
-type Variable struct {
-	Value     any    `json:"value"`
-	Type      string `json:"type"`
-	ValueInfo any    `json:"valueInfo,omitempty"`
-}
+// rnd is a package-local random number generator used for jitter.
+// Using a dedicated generator avoids mutating the global rand state
+// and improves test isolation.
+var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // TaskCompletion provides a fluent API for completing external tasks
 type TaskCompletion struct {
@@ -22,90 +25,206 @@ type TaskCompletion struct {
 	workerID       string
 	ctx            context.Context
 	taskID         string
-	variables      map[string]Variable
-	localVariables map[string]Variable
+	variables      map[string]vars.Variable
+	localVariables map[string]vars.Variable
+	logger         *slog.Logger
 }
 
 // NewTaskCompletion creates a new TaskCompletion builder
-func NewTaskCompletion(httpClient *httpclient.HTTPClient, workerID, taskID string) *TaskCompletion {
+func NewTaskCompletion(httpClient *httpclient.HTTPClient, workerID, taskID string, logger *slog.Logger) *TaskCompletion {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &TaskCompletion{
 		httpClient:     httpClient,
 		workerID:       workerID,
 		ctx:            context.Background(),
 		taskID:         taskID,
-		variables:      make(map[string]Variable),
-		localVariables: make(map[string]Variable),
+		variables:      make(map[string]vars.Variable),
+		localVariables: make(map[string]vars.Variable),
+		logger:         logger,
 	}
 }
 
-// Context sets the context for the completion request
 func (tc *TaskCompletion) Context(ctx context.Context) *TaskCompletion {
 	tc.ctx = ctx
 	return tc
 }
 
-// Variable adds a process variable
-func (tc *TaskCompletion) Variable(name string, value Variable) *TaskCompletion {
-	tc.variables[name] = value
+// Typed fluent helpers for adding variables to the completion request.
+// These mirror the helpers in the variables package and make it ergonomic
+// to build up variables in handlers via the complete() factory.
+func (tc *TaskCompletion) StringVariable(name, value string) *TaskCompletion {
+	tc.variables[name] = vars.StringVariable(value)
 	return tc
 }
 
-// Variables adds multiple process variables
-func (tc *TaskCompletion) Variables(vars map[string]Variable) *TaskCompletion {
-	for k, v := range vars {
-		tc.variables[k] = v
-	}
+func (tc *TaskCompletion) LocalStringVariable(name, value string) *TaskCompletion {
+	tc.localVariables[name] = vars.StringVariable(value)
 	return tc
 }
 
-// LocalVariable adds a local variable
-func (tc *TaskCompletion) LocalVariable(name string, value Variable) *TaskCompletion {
-	tc.localVariables[name] = value
+func (tc *TaskCompletion) IntVariable(name string, value int) *TaskCompletion {
+	tc.variables[name] = vars.IntVariable(value)
 	return tc
 }
 
-// LocalVariables adds multiple local variables
-func (tc *TaskCompletion) LocalVariables(vars map[string]Variable) *TaskCompletion {
-	for k, v := range vars {
-		tc.localVariables[k] = v
-	}
+func (tc *TaskCompletion) LocalIntVariable(name string, value int) *TaskCompletion {
+	tc.localVariables[name] = vars.IntVariable(value)
 	return tc
 }
 
-// Execute sends the completion request
+func (tc *TaskCompletion) LongVariable(name string, value int) *TaskCompletion {
+	tc.variables[name] = vars.LongVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) LocalLongVariable(name string, value int) *TaskCompletion {
+	tc.localVariables[name] = vars.LongVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) DoubleVariable(name string, value float64) *TaskCompletion {
+	tc.variables[name] = vars.DoubleVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) LocalDoubleVariable(name string, value float64) *TaskCompletion {
+	tc.localVariables[name] = vars.DoubleVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) BooleanVariable(name string, value bool) *TaskCompletion {
+	tc.variables[name] = vars.BooleanVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) LocalBooleanVariable(name string, value bool) *TaskCompletion {
+	tc.localVariables[name] = vars.BooleanVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) DateVariable(name string, value time.Time) *TaskCompletion {
+	tc.variables[name] = vars.DateVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) LocalDateVariable(name string, value time.Time) *TaskCompletion {
+	tc.localVariables[name] = vars.DateVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) JSONVariable(name string, value any) *TaskCompletion {
+	tc.variables[name] = vars.JSONVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) LocalJSONVariable(name string, value any) *TaskCompletion {
+	tc.localVariables[name] = vars.JSONVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) ListVariable(name string, value any) *TaskCompletion {
+	tc.variables[name] = vars.ListVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) LocalListVariable(name string, value any) *TaskCompletion {
+	tc.localVariables[name] = vars.ListVariable(value)
+	return tc
+}
+
+func (tc *TaskCompletion) NullVariable(name string) *TaskCompletion {
+	tc.variables[name] = vars.NullVariable()
+	return tc
+}
+
+func (tc *TaskCompletion) LocalNullVariable(name string) *TaskCompletion {
+	tc.localVariables[name] = vars.NullVariable()
+	return tc
+}
+
 func (tc *TaskCompletion) Execute() error {
 	req := struct {
-		WorkerID       string              `json:"workerId"`
-		Variables      map[string]Variable `json:"variables,omitempty"`
-		LocalVariables map[string]Variable `json:"localVariables,omitempty"`
+		WorkerID       string                   `json:"workerId"`
+		Variables      map[string]vars.Variable `json:"variables,omitempty"`
+		LocalVariables map[string]vars.Variable `json:"localVariables,omitempty"`
 	}{
 		WorkerID:       tc.workerID,
 		Variables:      tc.variables,
 		LocalVariables: tc.localVariables,
 	}
 
-	resp, err := tc.httpClient.POST(tc.ctx, "/external-task/{taskID}/complete").
-		PathParam("taskID", tc.taskID).
-		JSON(req).
-		Send()
-	if err != nil {
-		return fmt.Errorf("failed to send complete request: %w", err)
-	}
-	defer resp.Body.Close()
+	// Retry on optimistic locking exceptions returned by Camunda
+	const maxRetries = 3
+	baseBackoff := 100 * time.Millisecond
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err := tc.httpClient.POST(tc.ctx, "/external-task/{taskID}/complete").
+			PathParam("taskID", tc.taskID).
+			JSON(req).
+			Send()
+		if err != nil {
+			return fmt.Errorf("failed to send complete request: %w", err)
+		}
 
-	if resp.StatusCode != http.StatusNoContent {
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("failed to read response body: %w", readErr)
+		}
+
+		if resp.StatusCode == http.StatusNoContent {
+			return nil
+		}
+
+		// Log diagnostic details for non-204 responses so engine errors
+		// (e.g., OptimisticLockingException) are visible in application output.
+		tc.logger.Debug("complete failed",
+			"taskID", tc.taskID,
+			"attempt", attempt,
+			"status", resp.StatusCode,
+			"response", string(body),
+			"variables", req.Variables,
+		)
+
+		// If we get an optimistic locking exception, retry with backoff
+		if resp.StatusCode == http.StatusInternalServerError && strings.Contains(string(body), "OptimisticLockingException") {
+			if attempt < maxRetries {
+				// exponential backoff with small jitter (context-aware)
+				sleep := baseBackoff * (1 << attempt)
+				sleep += time.Duration(rnd.Intn(100)) * time.Millisecond
+
+				tc.logger.Info("optimistic locking, retrying",
+					"taskID", tc.taskID,
+					"attempt", attempt,
+					"backoff", sleep,
+				)
+
+				timer := time.NewTimer(sleep)
+				select {
+				case <-tc.ctx.Done():
+					timer.Stop()
+					return tc.ctx.Err()
+				case <-timer.C:
+					// continue to next attempt
+				}
+				continue
+			}
+			tc.logger.Warn("complete failed after retries due to optimistic locking",
+				"taskID", tc.taskID,
+				"retries", maxRetries,
+			)
+			return fmt.Errorf("complete request failed after %d retries due to optimistic locking: %s", maxRetries, string(body))
+		}
+
 		return fmt.Errorf("complete request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	return nil
+	return fmt.Errorf("complete request failed after retries")
 }
 
-// TaskFailure provides a fluent API for reporting task failures
+// TaskFailure preovides a fluent API for reporting task failures
 type TaskFailure struct {
 	httpClient   *httpclient.HTTPClient
 	workerID     string

@@ -9,132 +9,25 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/nativebpm/camunda/internal/builder"
+	"github.com/nativebpm/camunda/internal/tasks"
 	"github.com/nativebpm/camunda/internal/worker"
 	"github.com/nativebpm/httpclient"
 )
 
-// ExternalTask represents a Camunda external task
 type ExternalTask = worker.ExternalTask
-
-// Variable represents a Camunda variable with type safety
-type Variable = builder.Variable
-
-// TopicRequest represents a topic request for fetching tasks
+type CompleteFunc = worker.CompleteFunc
+type FailFunc = worker.FailFunc
 type TopicRequest = worker.TopicRequest
-
-// StringVariable creates a string variable
-func StringVariable(value string) Variable {
-	return Variable{
-		Value: value,
-		Type:  "String",
-	}
-}
-
-// IntVariable creates an integer variable
-func IntVariable(value int64) Variable {
-	return Variable{
-		Value: value,
-		Type:  "Integer",
-	}
-}
-
-// LongVariable creates a long variable
-func LongVariable(value int64) Variable {
-	return Variable{
-		Value: value,
-		Type:  "Long",
-	}
-}
-
-// DoubleVariable creates a double variable
-func DoubleVariable(value float64) Variable {
-	return Variable{
-		Value: value,
-		Type:  "Double",
-	}
-}
-
-// BooleanVariable creates a boolean variable
-func BooleanVariable(value bool) Variable {
-	return Variable{
-		Value: value,
-		Type:  "Boolean",
-	}
-}
-
-// DateVariable creates a date variable
-func DateVariable(value time.Time) Variable {
-	return Variable{
-		Value: value.Format(time.RFC3339),
-		Type:  "Date",
-	}
-}
-
-// JSONVariable creates a JSON variable from any value
-// The value is serialized to a JSON string and stored as a Camunda Object type
-// This allows the JSON to be accessed in BPMN expressions
-func JSONVariable(value any) Variable {
-	// Serialize value to JSON string
-	jsonBytes, err := json.Marshal(value)
-	if err != nil {
-		// If marshaling fails, return the error as a string value
-		// This allows the caller to see what went wrong
-		return Variable{
-			Value: fmt.Sprintf("ERROR: failed to marshal JSON: %v", err),
-			Type:  "String",
-		}
-	}
-
-	return Variable{
-		Value: string(jsonBytes),
-		Type:  "Object",
-		ValueInfo: map[string]any{
-			"objectTypeName":          "java.util.LinkedHashMap",
-			"serializationDataFormat": "application/json",
-		},
-	}
-}
-
-// ListVariable creates a list variable from a slice
-// This is used for multi-instance activities in BPMN where Camunda needs to iterate over a collection
-// The value must be a slice ([]int, []string, []any, etc.)
-func ListVariable(value any) Variable {
-	// Serialize value to JSON string (required by Camunda for Object type)
-	jsonBytes, err := json.Marshal(value)
-	if err != nil {
-		return Variable{
-			Value: fmt.Sprintf("ERROR: failed to marshal list: %v", err),
-			Type:  "String",
-		}
-	}
-
-	return Variable{
-		Value: string(jsonBytes),
-		Type:  "Object",
-		ValueInfo: map[string]any{
-			"objectTypeName":          "java.util.ArrayList",
-			"serializationDataFormat": "application/json",
-		},
-	}
-}
-
-// NullVariable creates a null variable
-func NullVariable() Variable {
-	return Variable{
-		Value: nil,
-		Type:  "Null",
-	}
-}
 
 // Client represents a Camunda external task client
 type Client struct {
 	httpClient *httpclient.HTTPClient
 	workerID   string
+	logger     *slog.Logger
 }
 
 // NewClient creates a new Camunda external task client
-func NewClient(hostURL, workerID string) (*Client, error) {
+func NewClient(hostURL, workerID string, logger *slog.Logger) (*Client, error) {
 	baseURL := hostURL + "/engine-rest"
 	httpClient, err := httpclient.NewClient(http.Client{Timeout: 30 * time.Second}, baseURL)
 	if err != nil {
@@ -144,6 +37,7 @@ func NewClient(hostURL, workerID string) (*Client, error) {
 	return &Client{
 		httpClient: httpClient,
 		workerID:   workerID,
+		logger:     logger,
 	}, nil
 }
 
@@ -155,59 +49,53 @@ func (c *Client) Use(middleware httpclient.Middleware) *Client {
 
 // WithLogger adds logging middleware to the HTTP client
 func (c *Client) WithLogger(logger *slog.Logger) *Client {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	c.httpClient.WithLogger(logger)
+	c.logger = logger
 	return c
 }
 
 // TaskCompletion provides a fluent API for completing external tasks
-type TaskCompletion = builder.TaskCompletion
+type TaskCompletion = tasks.TaskCompletion
 
 // Complete creates a new TaskCompletion builder
 func (c *Client) Complete(taskID string) *TaskCompletion {
-	return builder.NewTaskCompletion(c.httpClient, c.workerID, taskID)
+	return tasks.NewTaskCompletion(c.httpClient, c.workerID, taskID, c.logger)
 }
 
 // TaskFailure provides a fluent API for reporting task failures
-type TaskFailure = builder.TaskFailure
+type TaskFailure = tasks.TaskFailure
 
 // Failure creates a new TaskFailure builder
 func (c *Client) Failure(taskID string) *TaskFailure {
-	return builder.NewTaskFailure(c.httpClient, c.workerID, taskID)
+	return tasks.NewTaskFailure(c.httpClient, c.workerID, taskID)
 }
 
 // LockExtension provides a fluent API for extending task locks
-type LockExtension = builder.LockExtension
+type LockExtension = tasks.LockExtension
 
 // ExtendLock creates a new LockExtension builder
 func (c *Client) ExtendLock(taskID string, newDuration int) *LockExtension {
-	return builder.NewLockExtension(c.httpClient, c.workerID, taskID, newDuration)
+	return tasks.NewLockExtension(c.httpClient, c.workerID, taskID, newDuration)
 }
 
 // TaskUnlock provides a fluent API for unlocking tasks
-type TaskUnlock = builder.TaskUnlock
+type TaskUnlock = tasks.TaskUnlock
 
 // Unlock creates a new TaskUnlock builder
 func (c *Client) Unlock(taskID string) *TaskUnlock {
-	return builder.NewTaskUnlock(c.httpClient, c.workerID, taskID)
+	return tasks.NewTaskUnlock(c.httpClient, c.workerID, taskID)
 }
 
 // StartProcessInstance starts a new process instance by process definition key
-func (c *Client) StartProcessInstance(ctx context.Context, processDefinitionKey string, variables map[string]any) (string, error) {
-	// Prepare the request payload
-	payload := map[string]any{
-		"variables": make(map[string]map[string]any),
-	}
-
-	for key, value := range variables {
-		payload["variables"].(map[string]map[string]any)[key] = map[string]any{
-			"value": value,
-		}
-	}
-
+func (c *Client) StartProcessInstance(ctx context.Context, processDefinitionKey string, variables map[string]Variable) (string, error) {
 	resp, err := c.httpClient.POST(ctx, "/process-definition/key/{processDefinitionKey}/start").
 		PathParam("processDefinitionKey", processDefinitionKey).
-		JSON(payload).
+		JSON(map[string]any{"variables": variables}).
 		Send()
+
 	if err != nil {
 		return "", fmt.Errorf("failed to send start process request: %w", err)
 	}
@@ -266,7 +154,12 @@ func (c *Client) DeployProcess(ctx context.Context, deploymentName string, bpmnR
 // TaskHandler defines the interface for external task handlers
 // Handlers implement business logic for specific topics
 type TaskHandler interface {
-	Handle(ctx context.Context, client *Client, task ExternalTask) error
+	// Handler receives a client and task and factories for completing or
+	// failing the task. Handlers may either use the client convenience
+	// methods (client.Complete) or use the provided factories for fluent
+	// variable building:
+	//   complete().StringVariable("ok", "yes").Execute()
+	Handle(ctx context.Context, client *Client, task ExternalTask, complete CompleteFunc, fail FailFunc) error
 }
 
 // Worker manages external task polling and processing with a clean handler-based architecture
@@ -312,6 +205,22 @@ func (w *Worker) SetPollInterval(interval time.Duration) *Worker {
 	return w
 }
 
+// SetMaxConcurrency sets the maximum number of tasks processed concurrently
+// This limits resource usage and prevents overwhelming the system with too many parallel tasks
+// Default is 20 (2x maxTasks)
+// Returns the worker for method chaining
+func (w *Worker) SetMaxConcurrency(maxConcurrency int) *Worker {
+	w.internalWorker.SetMaxConcurrency(maxConcurrency)
+	return w
+}
+
+// SetAsyncResponseTimeout enables long polling for fetchAndLock. Pass a time.Duration.
+// Use 0 to disable async long polling.
+func (w *Worker) SetAsyncResponseTimeout(timeout time.Duration) *Worker {
+	w.internalWorker.SetAsyncResponseTimeout(timeout)
+	return w
+}
+
 // Start begins polling for external tasks
 // This is a blocking call that will run until the context is cancelled
 func (w *Worker) Start(ctx context.Context) {
@@ -328,10 +237,16 @@ type handlerAdapter struct {
 func (ha *handlerAdapter) Handle(ctx context.Context, task worker.ExternalTask, complete worker.CompleteFunc, fail worker.FailFunc) error {
 	ha.logger.Info("Processing task", "taskID", task.ID, "topic", task.TopicName)
 
-	err := ha.handler.Handle(ctx, ha.client, task)
+	// The public handler API remains `Handle(ctx, client, task) error`.
+	// The internal worker provides a complete factory to the handler adapter,
+	// but for backward compatibility we call the public handler and only
+	// use the provided `complete` in case the handler wants to use the
+	// fluent `Client.Complete` API on the client directly.
+
+	err := ha.handler.Handle(ctx, ha.client, task, complete, fail)
 	if err != nil {
 		ha.logger.Error("Task processing failed", "taskID", task.ID, "topic", task.TopicName, "error", err)
-		// Report failure to Camunda
+		// Report failure to Camunda via provided fail func
 		failErr := fail("Task processing failed", err.Error(), 3, 30000)
 		if failErr != nil {
 			ha.logger.Error("Failed to report task failure", "taskID", task.ID, "error", failErr)

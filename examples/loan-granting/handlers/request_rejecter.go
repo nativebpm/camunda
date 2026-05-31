@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/nativebpm/camunda"
 )
@@ -22,7 +21,7 @@ func NewRequestRejecter(logger *slog.Logger) *RequestRejecter {
 }
 
 // Handle processes a loan rejection task
-func (h *RequestRejecter) Handle(ctx context.Context, client *camunda.Client, task camunda.ExternalTask) error {
+func (h *RequestRejecter) Handle(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
 	h.logger.Info("Processing loan rejection", "taskID", task.ID, "processInstanceID", task.ProcessInstanceID)
 
 	// Extract credit score from task variables (provided by multi-instance subprocess)
@@ -58,7 +57,7 @@ func (h *RequestRejecter) Handle(ctx context.Context, client *camunda.Client, ta
 		"taskID", task.ID)
 
 	// Simulate rejection processing (notification, compliance checks, etc.)
-	time.Sleep(2 * time.Second)
+	//time.Sleep(2 * time.Second)
 
 	// Prepare detailed rejection reason based on credit score
 	var reason, recommendation string
@@ -80,17 +79,13 @@ func (h *RequestRejecter) Handle(ctx context.Context, client *camunda.Client, ta
 		"reason", reason)
 
 	// Complete the task with results
-	variables := map[string]camunda.Variable{
-		"loanRejected":     camunda.BooleanVariable(true),
-		"rejectionReason":  camunda.StringVariable(reason),
-		"recommendation":   camunda.StringVariable(recommendation),
-		"rejectionMessage": camunda.StringVariable(fmt.Sprintf("We're sorry, but we cannot approve your loan application for $%.2f. %s", requestedAmount, reason)),
-		"canReapplyAfter":  camunda.StringVariable("6 months"),
-	}
-
-	err := client.Complete(task.ID).
-		Context(ctx).
-		Variables(variables).
+	// Use provided complete factory for fluent completion
+	err := complete().
+		BooleanVariable("loanRejected", true).
+		StringVariable("rejectionReason", reason).
+		StringVariable("recommendation", recommendation).
+		StringVariable("rejectionMessage", fmt.Sprintf("We're sorry, but we cannot approve your loan application for $%.2f. %s", requestedAmount, reason)).
+		StringVariable("canReapplyAfter", "6 months").
 		Execute()
 	if err != nil {
 		return err

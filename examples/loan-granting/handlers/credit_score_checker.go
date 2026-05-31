@@ -21,7 +21,7 @@ func NewCreditScoreChecker(logger *slog.Logger) *CreditScoreChecker {
 }
 
 // Handle processes a credit score checking task
-func (h *CreditScoreChecker) Handle(ctx context.Context, client *camunda.Client, task camunda.ExternalTask) error {
+func (h *CreditScoreChecker) Handle(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
 	h.logger.Info("Checking credit scores", "taskID", task.ID, "processInstanceID", task.ProcessInstanceID)
 
 	// Extract applicant data from process variables
@@ -61,13 +61,9 @@ func (h *CreditScoreChecker) Handle(ctx context.Context, client *camunda.Client,
 
 	// Complete the task with results
 	// Use ListVariable for creditScores so that multi-instance subprocess can iterate over it
-	variables := map[string]camunda.Variable{
-		"creditScores": camunda.ListVariable(scores),
-	}
-
-	err := client.Complete(task.ID).
-		Context(ctx).
-		Variables(variables).
+	// Complete using the provided complete factory for fluent variable building
+	err := complete().
+		ListVariable("creditScores", scores).
 		Execute()
 	if err != nil {
 		return err

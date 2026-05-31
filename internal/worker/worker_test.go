@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nativebpm/camunda/internal/builder"
+	"github.com/nativebpm/camunda/internal/vars"
 	"github.com/nativebpm/httpclient"
 )
 
@@ -313,11 +313,12 @@ func TestWorker_ProcessTask(t *testing.T) {
 	handler := &MockHandler{}
 	worker.RegisterHandler("testTopic", handler, 60000, []string{})
 
+	vb := vars.NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "testTopic",
 		WorkerID:  "test-worker",
-		Variables: make(map[string]builder.Variable),
+		Variables: vb.Variables(),
 	}
 
 	// Process task
@@ -347,11 +348,12 @@ func TestWorker_ProcessTask_NoHandler(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	worker := New(httpClient, "test-worker", logger)
 
+	vb2 := vars.NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "unknownTopic",
 		WorkerID:  "test-worker",
-		Variables: make(map[string]builder.Variable),
+		Variables: vb2.Variables(),
 	}
 
 	// Process task - should not panic
@@ -382,20 +384,23 @@ func TestCompleteFunc(t *testing.T) {
 	handler := &MockHandler{}
 	worker.RegisterHandler("testTopic", handler, 60000, []string{})
 
+	vb3 := vars.NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "testTopic",
-		Variables: make(map[string]builder.Variable),
+		Variables: vb3.Variables(),
 	}
 
 	worker.processTask(context.Background(), task)
 
 	// Test the complete function that was provided to the handler
 	if handler.completeFn != nil {
-		vars := map[string]builder.Variable{
-			"result": {Value: "success", Type: "String"},
+		tc := handler.completeFn()
+		if tc == nil {
+			t.Fatal("complete factory returned nil TaskCompletion")
 		}
-		err := handler.completeFn(vars)
+		// Use typed helper to set a single string variable
+		err := tc.StringVariable("result", "success").Execute()
 		if err != nil {
 			t.Errorf("Expected complete to succeed, got error: %v", err)
 		}
@@ -419,10 +424,11 @@ func TestFailFunc(t *testing.T) {
 	handler := &MockHandler{}
 	worker.RegisterHandler("testTopic", handler, 60000, []string{})
 
+	vb4 := vars.NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "testTopic",
-		Variables: make(map[string]builder.Variable),
+		Variables: vb4.Variables(),
 	}
 
 	worker.processTask(context.Background(), task)

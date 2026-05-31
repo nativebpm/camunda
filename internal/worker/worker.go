@@ -7,9 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
+	"sync"
 	"time"
 
-	"github.com/nativebpm/camunda/internal/builder"
+	"github.com/nativebpm/camunda/internal/tasks"
+	"github.com/nativebpm/camunda/internal/vars"
 	"github.com/nativebpm/httpclient"
 )
 
@@ -27,22 +30,22 @@ type TopicRequest struct {
 
 // ExternalTask represents a Camunda external task
 type ExternalTask struct {
-	ID                  string                      `json:"id"`
-	TopicName           string                      `json:"topicName"`
-	WorkerID            string                      `json:"workerId"`
-	LockExpirationTime  *time.Time                  `json:"lockExpirationTime,omitempty"`
-	Retries             *int                        `json:"retries,omitempty"`
-	ErrorMessage        string                      `json:"errorMessage,omitempty"`
-	ErrorDetails        string                      `json:"errorDetails,omitempty"`
-	Variables           map[string]builder.Variable `json:"variables,omitempty"`
-	BusinessKey         string                      `json:"businessKey,omitempty"`
-	TenantID            string                      `json:"tenantId,omitempty"`
-	Priority            int                         `json:"priority,omitempty"`
-	ActivityID          string                      `json:"activityId,omitempty"`
-	ActivityInstanceID  string                      `json:"activityInstanceId,omitempty"`
-	ExecutionID         string                      `json:"executionId,omitempty"`
-	ProcessInstanceID   string                      `json:"processInstanceId,omitempty"`
-	ProcessDefinitionID string                      `json:"processDefinitionId,omitempty"`
+	ID                  string                   `json:"id"`
+	TopicName           string                   `json:"topicName"`
+	WorkerID            string                   `json:"workerId"`
+	LockExpirationTime  *time.Time               `json:"lockExpirationTime,omitempty"`
+	Retries             *int                     `json:"retries,omitempty"`
+	ErrorMessage        string                   `json:"errorMessage,omitempty"`
+	ErrorDetails        string                   `json:"errorDetails,omitempty"`
+	Variables           map[string]vars.Variable `json:"variables,omitempty"`
+	BusinessKey         string                   `json:"businessKey,omitempty"`
+	TenantID            string                   `json:"tenantId,omitempty"`
+	Priority            int                      `json:"priority,omitempty"`
+	ActivityID          string                   `json:"activityId,omitempty"`
+	ActivityInstanceID  string                   `json:"activityInstanceId,omitempty"`
+	ExecutionID         string                   `json:"executionId,omitempty"`
+	ProcessInstanceID   string                   `json:"processInstanceId,omitempty"`
+	ProcessDefinitionID string                   `json:"processDefinitionId,omitempty"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for ExternalTask
@@ -97,21 +100,27 @@ type TaskHandler interface {
 	Handle(ctx context.Context, task ExternalTask, complete CompleteFunc, fail FailFunc) error
 }
 
-// CompleteFunc is a function to complete a task
-type CompleteFunc func(vars map[string]builder.Variable) error
+// CompleteFunc is a factory function that returns a preconfigured TaskCompletion
+// so handlers can build variables fluently and then call Execute().
+// Example: complete().StringVariable("ok", "yes").Execute()
+type CompleteFunc func() *tasks.TaskCompletion
 
 // FailFunc is a function to report a task failure
 type FailFunc func(errorMessage, errorDetails string, retries, retryTimeout int) error
 
 // Worker manages external task polling and processing
 type Worker struct {
-	httpClient   *httpclient.HTTPClient
-	workerID     string
-	logger       *slog.Logger
-	handlers     map[string]TaskHandler
-	topics       []TopicRequest
-	maxTasks     int
-	pollInterval time.Duration
+	httpClient           *httpclient.HTTPClient
+	workerID             string
+	logger               *slog.Logger
+	handlers             map[string]TaskHandler
+	topics               []TopicRequest
+	maxTasks             int
+	pollInterval         time.Duration
+	maxConcurrency       int            // Maximum number of concurrent task processors
+	taskSemaphore        chan struct{}  // Semaphore to limit concurrent tasks
+	activeTasksWg        sync.WaitGroup // Tracks active task goroutines
+	asyncResponseTimeout int            // asyncResponseTimeout in milliseconds (long polling). 0 = disabled
 }
 
 // New creates a new external task worker
@@ -119,15 +128,36 @@ func New(httpClient *httpclient.HTTPClient, workerID string, logger *slog.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	// Default concurrency: 2x maxTasks to allow for some buffering
+	maxConcurrency := 20
+
+	// Default: enable long polling 20s to reduce fetch/lock pressure
+	defaultAsyncTimeout := 20000 // milliseconds
+
 	return &Worker{
-		httpClient:   httpClient,
-		workerID:     workerID,
-		logger:       logger,
-		handlers:     make(map[string]TaskHandler),
-		topics:       []TopicRequest{},
-		maxTasks:     10,
-		pollInterval: 5 * time.Second,
+		httpClient:           httpClient,
+		workerID:             workerID,
+		logger:               logger,
+		handlers:             make(map[string]TaskHandler),
+		topics:               []TopicRequest{},
+		maxTasks:             10,
+		pollInterval:         5 * time.Second,
+		maxConcurrency:       maxConcurrency,
+		taskSemaphore:        make(chan struct{}, maxConcurrency),
+		asyncResponseTimeout: defaultAsyncTimeout,
 	}
+}
+
+// SetAsyncResponseTimeout sets the asyncResponseTimeout (long polling) for fetchAndLock in milliseconds.
+// Pass a time.Duration; a zero duration disables asyncResponseTimeout.
+func (w *Worker) SetAsyncResponseTimeout(timeout time.Duration) *Worker {
+	if timeout <= 0 {
+		w.asyncResponseTimeout = 0
+		return w
+	}
+	w.asyncResponseTimeout = int(timeout.Milliseconds())
+	return w
 }
 
 // RegisterHandler registers a handler for a specific topic
@@ -154,39 +184,52 @@ func (w *Worker) SetPollInterval(interval time.Duration) *Worker {
 	return w
 }
 
+// SetMaxConcurrency sets the maximum number of tasks processed concurrently
+func (w *Worker) SetMaxConcurrency(maxConcurrency int) *Worker {
+	if maxConcurrency < 1 {
+		maxConcurrency = 1
+	}
+	w.maxConcurrency = maxConcurrency
+	w.taskSemaphore = make(chan struct{}, maxConcurrency)
+	return w
+}
+
 // Start begins polling for external tasks
 func (w *Worker) Start(ctx context.Context) {
-	w.logger.Info("Starting external task worker", "topics", len(w.topics), "maxTasks", w.maxTasks)
+	w.logger.Info("Starting external task worker",
+		"topics", len(w.topics),
+		"maxTasks", w.maxTasks,
+		"maxConcurrency", w.maxConcurrency)
+
+	ticker := time.NewTicker(w.pollInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			w.logger.Info("Worker stopped")
+			w.logger.Info("Context cancelled, waiting for active tasks to complete...")
+			w.activeTasksWg.Wait()
+			w.logger.Info("Worker stopped gracefully")
 			return
-		default:
+		case <-ticker.C:
+			tasks, err := w.fetchAndLock(ctx)
+			if err != nil {
+				w.logger.Error("Failed to fetch tasks", "error", err)
+				continue
+			}
+
+			if len(tasks) == 0 {
+				continue
+			}
+
+			w.logger.Info("Fetched tasks", "count", len(tasks))
+
+			for _, task := range tasks {
+				w.taskSemaphore <- struct{}{}
+				w.activeTasksWg.Add(1)
+				go w.processTaskSafe(ctx, task)
+			}
 		}
-
-		tasks, err := w.fetchAndLock(ctx)
-		if err != nil {
-			w.logger.Error("Failed to fetch tasks", "error", err)
-			time.Sleep(w.pollInterval)
-			continue
-		}
-
-		if len(tasks) == 0 {
-			time.Sleep(w.pollInterval)
-			continue
-		}
-
-		w.logger.Info("Fetched tasks", "count", len(tasks))
-
-		// Process each task in a separate goroutine
-		for _, task := range tasks {
-			go w.processTask(ctx, task)
-		}
-
-		// Brief pause before next poll
-		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -197,11 +240,18 @@ func (w *Worker) fetchAndLock(ctx context.Context) ([]ExternalTask, error) {
 		MaxTasks    int            `json:"maxTasks"`
 		UsePriority bool           `json:"usePriority"`
 		Topics      []TopicRequest `json:"topics"`
+		// AsyncResponseTimeout enables long polling on the REST API. Omit when 0.
+		AsyncResponseTimeout *int `json:"asyncResponseTimeout,omitempty"`
 	}{
 		WorkerID:    w.workerID,
 		MaxTasks:    w.maxTasks,
 		UsePriority: true,
 		Topics:      w.topics,
+	}
+
+	if w.asyncResponseTimeout > 0 {
+		val := w.asyncResponseTimeout
+		req.AsyncResponseTimeout = &val
 	}
 
 	resp, err := w.httpClient.POST(ctx, "/external-task/fetchAndLock").
@@ -229,7 +279,53 @@ func (w *Worker) fetchAndLock(ctx context.Context) ([]ExternalTask, error) {
 	return tasks, nil
 }
 
-// processTask processes a single task using the registered handler
+// processTaskSafe wraps processTask with panic recovery and cleanup.
+// This method is called from goroutines and handles all concurrency concerns:
+// - Semaphore slot release
+// - WaitGroup tracking
+// - Panic recovery with Camunda failure reporting
+// Use this method for production goroutine execution.
+func (w *Worker) processTaskSafe(ctx context.Context, task ExternalTask) {
+	// Ensure cleanup happens regardless of panic or normal return
+	defer func() {
+		// Release semaphore slot
+		<-w.taskSemaphore
+
+		// Mark task as done in WaitGroup
+		w.activeTasksWg.Done()
+
+		// Recover from panic to prevent goroutine crash
+		if r := recover(); r != nil {
+			w.logger.Error("Panic in task processing",
+				"taskID", task.ID,
+				"topic", task.TopicName,
+				"panic", r,
+				"stack", string(debug.Stack()))
+
+			// Try to report failure to Camunda
+			failErr := tasks.NewTaskFailure(w.httpClient, w.workerID, task.ID).
+				Context(ctx).
+				ErrorMessage("Task handler panicked").
+				ErrorDetails(fmt.Sprintf("Panic: %v\n\nStack:\n%s", r, debug.Stack())).
+				Retries(3).
+				RetryTimeout(60000).
+				Execute()
+
+			if failErr != nil {
+				w.logger.Error("Failed to report panic to Camunda",
+					"taskID", task.ID,
+					"error", failErr)
+			}
+		}
+	}()
+
+	// Process the task
+	w.processTask(ctx, task)
+}
+
+// processTask processes a single task using the registered handler.
+// This method contains the core business logic without concurrency management,
+// making it easier to test. For production use, call processTaskSafe instead.
 func (w *Worker) processTask(ctx context.Context, task ExternalTask) {
 	handler, ok := w.handlers[task.TopicName]
 	if !ok {
@@ -237,17 +333,19 @@ func (w *Worker) processTask(ctx context.Context, task ExternalTask) {
 		return
 	}
 
-	// Create complete function
-	complete := func(vars map[string]builder.Variable) error {
-		return builder.NewTaskCompletion(w.httpClient, w.workerID, task.ID).
-			Context(ctx).
-			Variables(vars).
-			Execute()
+	// Create complete factory: handlers can call complete() to get a TaskCompletion
+	// and then use fluent methods: complete().StringVariable(...).Execute()
+	// Create a logger pre-attached with process/task context to help correlate
+	// completion logs with engine-side errors (e.g., optimistic locking).
+	loggerWithCtx := w.logger.With("processInstanceID", task.ProcessInstanceID, "activityID", task.ActivityID, "topic", task.TopicName)
+
+	complete := func() *tasks.TaskCompletion {
+		return tasks.NewTaskCompletion(w.httpClient, w.workerID, task.ID, loggerWithCtx).Context(ctx)
 	}
 
 	// Create fail function
 	fail := func(errorMessage, errorDetails string, retries, retryTimeout int) error {
-		return builder.NewTaskFailure(w.httpClient, w.workerID, task.ID).
+		return tasks.NewTaskFailure(w.httpClient, w.workerID, task.ID).
 			Context(ctx).
 			ErrorMessage(errorMessage).
 			ErrorDetails(errorDetails).
