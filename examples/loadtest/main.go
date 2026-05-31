@@ -106,16 +106,43 @@ func main() {
 		}
 	}()
 
-	// Configure workers
-	w := camunda.NewWorker(client, logger)
-	w.SetMaxTasks(concurrency)
-	w.SetMaxConcurrency(concurrency * 2)
-	w.SetPollInterval(50 * time.Millisecond) // Poll aggressively for load testing
-	w.SetAsyncResponseTimeout(5 * time.Second)
+	useSequin := os.Getenv("USE_SEQUIN") == "true"
+	var sequinWorker *camunda.SequinWorker
+	var normalWorker *camunda.Worker
 
-	// Register workers
-	// Mock credit score checker - sets 3 scores in list (collections)
-	w.RegisterHandler("creditScoreChecker", camunda.TaskHandlerFunc(func(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
+	if useSequin {
+		dbDSN := os.Getenv("DB_DSN")
+		if dbDSN == "" {
+			dbDSN = "postgres://camunda:camunda@localhost:7477/process-engine?sslmode=disable"
+		}
+		sequinURL := os.Getenv("SEQUIN_URL")
+		if sequinURL == "" {
+			sequinURL = "http://localhost:7376"
+		}
+		sequinConsumer := os.Getenv("SEQUIN_CONSUMER")
+		if sequinConsumer == "" {
+			sequinConsumer = "camunda_tasks_stream"
+		}
+
+		var err error
+		sequinWorker, err = camunda.NewSequinWorker(client, dbDSN, sequinURL, sequinConsumer, logger)
+		if err != nil {
+			logger.Error("Failed to create Sequin worker", "error", err)
+			return
+		}
+		logger.Info("Using Sequin logical CDC worker")
+	} else {
+		// Configure normal workers
+		normalWorker = camunda.NewWorker(client, logger)
+		normalWorker.SetMaxTasks(concurrency)
+		normalWorker.SetMaxConcurrency(concurrency * 2)
+		normalWorker.SetPollInterval(50 * time.Millisecond) // Poll aggressively for load testing
+		normalWorker.SetAsyncResponseTimeout(5 * time.Second)
+		logger.Info("Using standard REST polling worker")
+	}
+
+	// Handlers functions
+	creditScoreCheckerHandler := camunda.TaskHandlerFunc(func(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
 		scores := []int{6, 7, 5}
 		err := complete().ListVariable("creditScores", scores).Execute()
 		if err != nil {
@@ -124,10 +151,9 @@ func main() {
 		}
 		completedChecker.Add(1)
 		return nil
-	}), 60000, []string{})
+	})
 
-	// Mock loan granter
-	w.RegisterHandler("loanGranter", camunda.TaskHandlerFunc(func(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
+	loanGranterHandler := camunda.TaskHandlerFunc(func(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
 		err := complete().Execute()
 		if err != nil {
 			failedTasks.Add(1)
@@ -142,10 +168,9 @@ func main() {
 			}
 		}
 		return nil
-	}), 60000, []string{"score"})
+	})
 
-	// Mock request rejecter
-	w.RegisterHandler("requestRejecter", camunda.TaskHandlerFunc(func(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
+	requestRejecterHandler := camunda.TaskHandlerFunc(func(ctx context.Context, client *camunda.Client, task camunda.ExternalTask, complete camunda.CompleteFunc, fail camunda.FailFunc) error {
 		err := complete().Execute()
 		if err != nil {
 			failedTasks.Add(1)
@@ -160,10 +185,19 @@ func main() {
 			}
 		}
 		return nil
-	}), 60000, []string{"score"})
+	})
 
-	// Start worker in background
-	go w.Start(ctx)
+	if useSequin {
+		sequinWorker.RegisterHandler("creditScoreChecker", creditScoreCheckerHandler)
+		sequinWorker.RegisterHandler("loanGranter", loanGranterHandler)
+		sequinWorker.RegisterHandler("requestRejecter", requestRejecterHandler)
+		go sequinWorker.Start(ctx)
+	} else {
+		normalWorker.RegisterHandler("creditScoreChecker", creditScoreCheckerHandler, 60000, []string{})
+		normalWorker.RegisterHandler("loanGranter", loanGranterHandler, 60000, []string{"score"})
+		normalWorker.RegisterHandler("requestRejecter", requestRejecterHandler, 60000, []string{"score"})
+		go normalWorker.Start(ctx)
+	}
 
 	// Start submitting instances concurrently
 	submitStart := time.Now()

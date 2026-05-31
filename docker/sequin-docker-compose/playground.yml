@@ -6,6 +6,10 @@ users:
     email: "admin@sequinstream.com"
     password: "sequinpassword!"
 
+api_tokens:
+  - name: "loadtest-token"
+    token: "sequin_loadtest_secret_token_12345"
+
 databases:
   - name: "sequin-playground"
     username: "postgres"
@@ -15,3 +19,21 @@ databases:
     port: 5432
     slot_name: "sequin_slot"
     publication_name: "sequin_pub"
+
+  - name: "camunda-db"
+    username: "sequin_user"
+    password: "ktNyE6d9kDvXpFzzWCYDKeLzBYTZf7z88/UkZvHzuF8="
+    hostname: "camunda_postgres"
+    database: "process-engine"
+    port: 5432
+    slot_name: "sequin_slot"
+    publication_name: "sequin_pub"
+
+sinks:
+  - name: "camunda_tasks_stream"
+    database: "camunda-db"
+    destination:
+      type: "sequin_stream"
+    source:
+      include_schemas:
+        - "public"

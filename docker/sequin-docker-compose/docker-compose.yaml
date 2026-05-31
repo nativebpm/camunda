@@ -2,7 +2,7 @@ name: sequin
 
 services:
   sequin:
-    image: sequin/sequin:latest
+    image: sequin/sequin:v0.14.6
     pull_policy: always
     ports:
       - "7376:7376"

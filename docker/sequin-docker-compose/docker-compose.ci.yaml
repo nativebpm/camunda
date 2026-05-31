@@ -2,7 +2,7 @@ name: sequin
 
 services:
   sequin:
-    image: sequin/sequin:${SEQUIN_IMAGE_VERSION:-latest}
+    image: sequin/sequin:${SEQUIN_IMAGE_VERSION:-v0.14.6}
     pull_policy: always
     ports:
       - "7376:7376"
@@ -17,6 +17,9 @@ services:
       - SECRET_KEY_BASE=wDPLYus0pvD6qJhKJICO4dauYPXfO/Yl782Zjtpew5qRBDp7CZvbWtQmY0eB13If
       - VAULT_KEY=2Sig69bIpuSm2kv0VQfDekET2qy8qUZGI8v3/h3ASiY=
       - REDIS_URL=redis://sequin_redis:6379
+      - CONFIG_FILE_PATH=/config/playground.yml
+    volumes:
+      - ./playground.yml:/config/playground.yml
     depends_on:
       sequin_redis:
         condition: service_started
@@ -34,6 +37,7 @@ services:
     command: ["postgres", "-c", "wal_level=logical"]
     volumes:
       - sequin_postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d sequin"]
       interval: 10s
