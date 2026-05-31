@@ -1,4 +1,4 @@
-package worker
+package camunda
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nativebpm/camunda/internal/vars"
 	"github.com/nativebpm/httpstream"
 )
 
@@ -104,7 +103,7 @@ type MockHandler struct {
 	failFn       FailFunc
 }
 
-func (m *MockHandler) Handle(ctx context.Context, task ExternalTask, complete CompleteFunc, fail FailFunc) error {
+func (m *MockHandler) Handle(ctx context.Context, client *Client, task ExternalTask, complete CompleteFunc, fail FailFunc) error {
 	m.called = true
 	m.calledWithID = task.ID
 	m.completeFn = complete
@@ -116,7 +115,7 @@ func TestNew(t *testing.T) {
 	httpClient, _ := httpstream.NewClient(&http.Client{}, "http://localhost:8080")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	worker := New(httpClient, "test-worker", logger)
+	worker := testNewWorker(httpClient, "test-worker", logger)
 
 	if worker == nil {
 		t.Fatal("Expected worker to be created")
@@ -154,7 +153,7 @@ func TestNew(t *testing.T) {
 func TestNew_NilLogger(t *testing.T) {
 	httpClient, _ := httpstream.NewClient(&http.Client{}, "http://localhost:8080")
 
-	worker := New(httpClient, "test-worker", nil)
+	worker := testNewWorker(httpClient, "test-worker", nil)
 
 	if worker == nil {
 		t.Fatal("Expected worker to be created")
@@ -168,7 +167,7 @@ func TestNew_NilLogger(t *testing.T) {
 func TestWorker_RegisterHandler(t *testing.T) {
 	httpClient, _ := httpstream.NewClient(&http.Client{}, "http://localhost:8080")
 	logger := slog.Default()
-	worker := New(httpClient, "test-worker", logger)
+	worker := testNewWorker(httpClient, "test-worker", logger)
 
 	handler := &MockHandler{}
 	result := worker.RegisterHandler("testTopic", handler, 60000, []string{"var1"})
@@ -208,7 +207,7 @@ func TestWorker_RegisterHandler(t *testing.T) {
 
 func TestWorker_RegisterHandler_Multiple(t *testing.T) {
 	httpClient, _ := httpstream.NewClient(&http.Client{}, "http://localhost:8080")
-	worker := New(httpClient, "test-worker", nil)
+	worker := testNewWorker(httpClient, "test-worker", nil)
 
 	handler1 := &MockHandler{}
 	handler2 := &MockHandler{}
@@ -235,7 +234,7 @@ func TestWorker_RegisterHandler_Multiple(t *testing.T) {
 
 func TestWorker_SetMaxTasks(t *testing.T) {
 	httpClient, _ := httpstream.NewClient(&http.Client{}, "http://localhost:8080")
-	worker := New(httpClient, "test-worker", nil)
+	worker := testNewWorker(httpClient, "test-worker", nil)
 
 	result := worker.SetMaxTasks(20)
 
@@ -251,7 +250,7 @@ func TestWorker_SetMaxTasks(t *testing.T) {
 
 func TestWorker_SetPollInterval(t *testing.T) {
 	httpClient, _ := httpstream.NewClient(&http.Client{}, "http://localhost:8080")
-	worker := New(httpClient, "test-worker", nil)
+	worker := testNewWorker(httpClient, "test-worker", nil)
 
 	interval := 10 * time.Second
 	result := worker.SetPollInterval(interval)
@@ -271,7 +270,7 @@ func TestWorker_FluentAPI(t *testing.T) {
 	handler := &MockHandler{}
 
 	// Test method chaining
-	worker := New(httpClient, "test-worker", nil).
+	worker := testNewWorker(httpClient, "test-worker", nil).
 		RegisterHandler("topic1", handler, 60000, []string{"var1"}).
 		RegisterHandler("topic2", handler, 60000, []string{"var2"}).
 		SetMaxTasks(15).
@@ -308,12 +307,12 @@ func TestWorker_ProcessTask(t *testing.T) {
 
 	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	worker := New(httpClient, "test-worker", logger)
+	worker := testNewWorker(httpClient, "test-worker", logger)
 
 	handler := &MockHandler{}
 	worker.RegisterHandler("testTopic", handler, 60000, []string{})
 
-	vb := vars.NewVariables()
+	vb := NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "testTopic",
@@ -346,9 +345,9 @@ func TestWorker_ProcessTask(t *testing.T) {
 func TestWorker_ProcessTask_NoHandler(t *testing.T) {
 	httpClient, _ := httpstream.NewClient(&http.Client{}, "http://localhost:8080")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	worker := New(httpClient, "test-worker", logger)
+	worker := testNewWorker(httpClient, "test-worker", logger)
 
-	vb2 := vars.NewVariables()
+	vb2 := NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "unknownTopic",
@@ -379,12 +378,12 @@ func TestCompleteFunc(t *testing.T) {
 	defer server.Close()
 
 	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
-	worker := New(httpClient, "test-worker", nil)
+	worker := testNewWorker(httpClient, "test-worker", nil)
 
 	handler := &MockHandler{}
 	worker.RegisterHandler("testTopic", handler, 60000, []string{})
 
-	vb3 := vars.NewVariables()
+	vb3 := NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "testTopic",
@@ -419,12 +418,12 @@ func TestFailFunc(t *testing.T) {
 	defer server.Close()
 
 	httpClient, _ := httpstream.NewClient(&http.Client{}, server.URL)
-	worker := New(httpClient, "test-worker", nil)
+	worker := testNewWorker(httpClient, "test-worker", nil)
 
 	handler := &MockHandler{}
 	worker.RegisterHandler("testTopic", handler, 60000, []string{})
 
-	vb4 := vars.NewVariables()
+	vb4 := NewVariables()
 	task := ExternalTask{
 		ID:        "task-123",
 		TopicName: "testTopic",
@@ -440,4 +439,12 @@ func TestFailFunc(t *testing.T) {
 			t.Errorf("Expected fail to succeed, got error: %v", err)
 		}
 	}
+}
+
+func testNewWorker(httpClient *httpstream.Client, workerID string, logger *slog.Logger) *Worker {
+	client := &Client{
+		httpClient: httpClient,
+		workerID:   workerID,
+	}
+	return NewWorker(client, logger)
 }

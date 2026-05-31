@@ -1,6 +1,6 @@
 // Test file for synctest
 
-package worker
+package camunda
 
 import (
 	"bytes"
@@ -54,7 +54,7 @@ func TestWorker_Start_Synctest(t *testing.T) {
 		}
 
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-		worker := New(httpClient, "test-worker", logger)
+		worker := testNewWorker(httpClient, "test-worker", logger)
 		
 		// Set a poll interval of 5 seconds (default). 
 		// Real-world testing would wait 15 seconds for 3 polls.

@@ -1,4 +1,4 @@
-package vars
+package camunda
 
 import (
 	"encoding/json"

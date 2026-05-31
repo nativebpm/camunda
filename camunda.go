@@ -5,19 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/nativebpm/camunda/internal/tasks"
-	"github.com/nativebpm/camunda/internal/worker"
 	"github.com/nativebpm/httpstream"
 )
-
-type ExternalTask = worker.ExternalTask
-type CompleteFunc = worker.CompleteFunc
-type FailFunc = worker.FailFunc
-type TopicRequest = worker.TopicRequest
 
 // Client represents a Camunda external task client
 type Client struct {
@@ -52,52 +44,34 @@ func (c *Client) Use(middleware func(http.RoundTripper) http.RoundTripper) *Clie
 	return c
 }
 
-// TaskCompletion provides a fluent API for completing external tasks
-type TaskCompletion = tasks.TaskCompletion
-
 // Complete creates a new TaskCompletion builder
 func (c *Client) Complete(taskID string) *TaskCompletion {
-	return tasks.NewTaskCompletion(c.httpClient, c.workerID, taskID)
+	return NewTaskCompletion(c.httpClient, c.workerID, taskID)
 }
-
-// TaskFailure provides a fluent API for reporting task failures
-type TaskFailure = tasks.TaskFailure
 
 // Failure creates a new TaskFailure builder
 func (c *Client) Failure(taskID string) *TaskFailure {
-	return tasks.NewTaskFailure(c.httpClient, c.workerID, taskID)
+	return NewTaskFailure(c.httpClient, c.workerID, taskID)
 }
-
-// TaskBpmnError provides a fluent API for reporting BPMN errors
-type TaskBpmnError = tasks.TaskBpmnError
 
 // BpmnError creates a new TaskBpmnError builder
 func (c *Client) BpmnError(taskID, errorCode, errorMessage string) *TaskBpmnError {
-	return tasks.NewTaskBpmnError(c.httpClient, c.workerID, taskID, errorCode, errorMessage)
+	return NewTaskBpmnError(c.httpClient, c.workerID, taskID, errorCode, errorMessage)
 }
-
-// LockExtension provides a fluent API for extending task locks
-type LockExtension = tasks.LockExtension
 
 // ExtendLock creates a new LockExtension builder
 func (c *Client) ExtendLock(taskID string, newDuration int) *LockExtension {
-	return tasks.NewLockExtension(c.httpClient, c.workerID, taskID, newDuration)
+	return NewLockExtension(c.httpClient, c.workerID, taskID, newDuration)
 }
-
-// TaskUnlock provides a fluent API for unlocking tasks
-type TaskUnlock = tasks.TaskUnlock
 
 // Unlock creates a new TaskUnlock builder
 func (c *Client) Unlock(taskID string) *TaskUnlock {
-	return tasks.NewTaskUnlock(c.httpClient, c.workerID, taskID)
+	return NewTaskUnlock(c.httpClient, c.workerID, taskID)
 }
-
-// TaskLock provides a fluent API for locking tasks
-type TaskLock = tasks.TaskLock
 
 // Lock creates a new TaskLock builder
 func (c *Client) Lock(taskID string, duration int) *TaskLock {
-	return tasks.NewTaskLock(c.httpClient, c.workerID, taskID, duration)
+	return NewTaskLock(c.httpClient, c.workerID, taskID, duration)
 }
 
 // GetProcessVariables retrieves all variables of a process instance from Camunda REST API
@@ -267,98 +241,4 @@ func (f TaskHandlerFunc) Handle(ctx context.Context, client *Client, task Extern
 	return f(ctx, client, task, complete, fail)
 }
 
-// Worker manages external task polling and processing with a clean handler-based architecture
-type Worker struct {
-	internalWorker *worker.Worker
-	client         *Client
-	logger         *slog.Logger
-}
 
-// NewWorker creates a new external task worker
-func NewWorker(client *Client, logger *slog.Logger) *Worker {
-	return &Worker{
-		internalWorker: worker.New(client.httpClient, client.workerID, logger),
-		client:         client,
-		logger:         logger,
-	}
-}
-
-// RegisterHandler registers a handler for a specific topic
-// Returns the worker for method chaining
-func (w *Worker) RegisterHandler(topicName string, handler TaskHandler, lockDuration int, variables []string) *Worker {
-	// Wrap the public handler interface to match internal interface
-	internalHandler := &handlerAdapter{
-		handler: handler,
-		client:  w.client,
-		logger:  w.logger,
-	}
-	w.internalWorker.RegisterHandler(topicName, internalHandler, lockDuration, variables)
-	return w
-}
-
-// SetMaxTasks sets the maximum number of tasks to fetch per poll
-// Returns the worker for method chaining
-func (w *Worker) SetMaxTasks(maxTasks int) *Worker {
-	w.internalWorker.SetMaxTasks(maxTasks)
-	return w
-}
-
-// SetPollInterval sets the interval between polls when no tasks are available
-// Returns the worker for method chaining
-func (w *Worker) SetPollInterval(interval time.Duration) *Worker {
-	w.internalWorker.SetPollInterval(interval)
-	return w
-}
-
-// SetMaxConcurrency sets the maximum number of tasks processed concurrently
-// This limits resource usage and prevents overwhelming the system with too many parallel tasks
-// Default is 20 (2x maxTasks)
-// Returns the worker for method chaining
-func (w *Worker) SetMaxConcurrency(maxConcurrency int) *Worker {
-	w.internalWorker.SetMaxConcurrency(maxConcurrency)
-	return w
-}
-
-// SetAsyncResponseTimeout enables long polling for fetchAndLock. Pass a time.Duration.
-// Use 0 to disable async long polling.
-func (w *Worker) SetAsyncResponseTimeout(timeout time.Duration) *Worker {
-	w.internalWorker.SetAsyncResponseTimeout(timeout)
-	return w
-}
-
-// Start begins polling for external tasks
-// This is a blocking call that will run until the context is cancelled
-func (w *Worker) Start(ctx context.Context) {
-	w.internalWorker.Start(ctx)
-}
-
-// handlerAdapter adapts the public TaskHandler interface to the internal interface
-type handlerAdapter struct {
-	handler TaskHandler
-	client  *Client
-	logger  *slog.Logger
-}
-
-func (ha *handlerAdapter) Handle(ctx context.Context, task worker.ExternalTask, complete worker.CompleteFunc, fail worker.FailFunc) error {
-	ha.logger.Info("Processing task", "taskID", task.ID, "topic", task.TopicName)
-
-	// The public handler API remains `Handle(ctx, client, task) error`.
-	// The internal worker provides a complete factory to the handler adapter,
-	// but for backward compatibility we call the public handler and only
-	// use the provided `complete` in case the handler wants to use the
-	// fluent `Client.Complete` API on the client directly.
-
-	err := ha.handler.Handle(ctx, ha.client, task, complete, fail)
-	if err != nil {
-		ha.logger.Error("Task processing failed", "taskID", task.ID, "topic", task.TopicName, "error", err)
-		// Report failure to Camunda via provided fail func
-		failErr := fail("Task processing failed", err.Error(), 3, 30000)
-		if failErr != nil {
-			ha.logger.Error("Failed to report task failure", "taskID", task.ID, "error", failErr)
-		}
-		return err
-	}
-
-	ha.logger.Info("Task processed successfully", "taskID", task.ID, "topic", task.TopicName)
-	return nil
-}

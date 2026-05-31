@@ -1,23 +1,18 @@
-package tasks
+package camunda
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/nativebpm/camunda/internal/vars"
 	"github.com/nativebpm/httpstream"
 )
 
-// rnd is a package-local random number generator used for jitter.
-// Using a dedicated generator avoids mutating the global rand state
-// and improves test isolation.
-var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 
 // TaskCompletion provides a fluent API for completing external tasks
 type TaskCompletion struct {
@@ -25,8 +20,8 @@ type TaskCompletion struct {
 	workerID       string
 	ctx            context.Context
 	taskID         string
-	variables      map[string]vars.Variable
-	localVariables map[string]vars.Variable
+	variables      map[string]Variable
+	localVariables map[string]Variable
 	logger         *slog.Logger
 }
 
@@ -37,8 +32,8 @@ func NewTaskCompletion(httpClient *httpstream.Client, workerID, taskID string) *
 		workerID:       workerID,
 		ctx:            context.Background(),
 		taskID:         taskID,
-		variables:      make(map[string]vars.Variable),
-		localVariables: make(map[string]vars.Variable),
+		variables:      make(map[string]Variable),
+		localVariables: make(map[string]Variable),
 		logger:         slog.Default(),
 	}
 }
@@ -60,100 +55,100 @@ func (tc *TaskCompletion) Context(ctx context.Context) *TaskCompletion {
 // These mirror the helpers in the variables package and make it ergonomic
 // to build up variables in handlers via the complete() factory.
 func (tc *TaskCompletion) StringVariable(name, value string) *TaskCompletion {
-	tc.variables[name] = vars.StringVariable(value)
+	tc.variables[name] = StringVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalStringVariable(name, value string) *TaskCompletion {
-	tc.localVariables[name] = vars.StringVariable(value)
+	tc.localVariables[name] = StringVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) IntVariable(name string, value int) *TaskCompletion {
-	tc.variables[name] = vars.IntVariable(value)
+	tc.variables[name] = IntVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalIntVariable(name string, value int) *TaskCompletion {
-	tc.localVariables[name] = vars.IntVariable(value)
+	tc.localVariables[name] = IntVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LongVariable(name string, value int) *TaskCompletion {
-	tc.variables[name] = vars.LongVariable(value)
+	tc.variables[name] = LongVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalLongVariable(name string, value int) *TaskCompletion {
-	tc.localVariables[name] = vars.LongVariable(value)
+	tc.localVariables[name] = LongVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) DoubleVariable(name string, value float64) *TaskCompletion {
-	tc.variables[name] = vars.DoubleVariable(value)
+	tc.variables[name] = DoubleVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalDoubleVariable(name string, value float64) *TaskCompletion {
-	tc.localVariables[name] = vars.DoubleVariable(value)
+	tc.localVariables[name] = DoubleVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) BooleanVariable(name string, value bool) *TaskCompletion {
-	tc.variables[name] = vars.BooleanVariable(value)
+	tc.variables[name] = BooleanVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalBooleanVariable(name string, value bool) *TaskCompletion {
-	tc.localVariables[name] = vars.BooleanVariable(value)
+	tc.localVariables[name] = BooleanVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) DateVariable(name string, value time.Time) *TaskCompletion {
-	tc.variables[name] = vars.DateVariable(value)
+	tc.variables[name] = DateVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalDateVariable(name string, value time.Time) *TaskCompletion {
-	tc.localVariables[name] = vars.DateVariable(value)
+	tc.localVariables[name] = DateVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) JSONVariable(name string, value any) *TaskCompletion {
-	tc.variables[name] = vars.JSONVariable(value)
+	tc.variables[name] = JSONVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalJSONVariable(name string, value any) *TaskCompletion {
-	tc.localVariables[name] = vars.JSONVariable(value)
+	tc.localVariables[name] = JSONVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) ListVariable(name string, value any) *TaskCompletion {
-	tc.variables[name] = vars.ListVariable(value)
+	tc.variables[name] = ListVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) LocalListVariable(name string, value any) *TaskCompletion {
-	tc.localVariables[name] = vars.ListVariable(value)
+	tc.localVariables[name] = ListVariable(value)
 	return tc
 }
 
 func (tc *TaskCompletion) NullVariable(name string) *TaskCompletion {
-	tc.variables[name] = vars.NullVariable()
+	tc.variables[name] = NullVariable()
 	return tc
 }
 
 func (tc *TaskCompletion) LocalNullVariable(name string) *TaskCompletion {
-	tc.localVariables[name] = vars.NullVariable()
+	tc.localVariables[name] = NullVariable()
 	return tc
 }
 
 func (tc *TaskCompletion) Execute() error {
 	req := struct {
 		WorkerID       string                   `json:"workerId"`
-		Variables      map[string]vars.Variable `json:"variables,omitempty"`
-		LocalVariables map[string]vars.Variable `json:"localVariables,omitempty"`
+		Variables      map[string]Variable `json:"variables,omitempty"`
+		LocalVariables map[string]Variable `json:"localVariables,omitempty"`
 	}{
 		WorkerID:       tc.workerID,
 		Variables:      tc.variables,
@@ -495,7 +490,7 @@ type TaskBpmnError struct {
 	taskID       string
 	errorCode    string
 	errorMessage string
-	variables    map[string]vars.Variable
+	variables    map[string]Variable
 }
 
 // NewTaskBpmnError creates a new TaskBpmnError builder
@@ -507,7 +502,7 @@ func NewTaskBpmnError(httpClient *httpstream.Client, workerID, taskID, errorCode
 		taskID:       taskID,
 		errorCode:    errorCode,
 		errorMessage: errorMessage,
-		variables:    make(map[string]vars.Variable),
+		variables:    make(map[string]Variable),
 	}
 }
 
@@ -519,19 +514,19 @@ func (te *TaskBpmnError) Context(ctx context.Context) *TaskBpmnError {
 
 // StringVariable adds a string variable to the BPMN error request
 func (te *TaskBpmnError) StringVariable(name, value string) *TaskBpmnError {
-	te.variables[name] = vars.StringVariable(value)
+	te.variables[name] = StringVariable(value)
 	return te
 }
 
 // IntVariable adds an int variable to the BPMN error request
 func (te *TaskBpmnError) IntVariable(name string, value int) *TaskBpmnError {
-	te.variables[name] = vars.IntVariable(value)
+	te.variables[name] = IntVariable(value)
 	return te
 }
 
 // BooleanVariable adds a boolean variable to the BPMN error request
 func (te *TaskBpmnError) BooleanVariable(name string, value bool) *TaskBpmnError {
-	te.variables[name] = vars.BooleanVariable(value)
+	te.variables[name] = BooleanVariable(value)
 	return te
 }
 
@@ -541,7 +536,7 @@ func (te *TaskBpmnError) Execute() error {
 		WorkerID     string                   `json:"workerId"`
 		ErrorCode    string                   `json:"errorCode"`
 		ErrorMessage string                   `json:"errorMessage,omitempty"`
-		Variables    map[string]vars.Variable `json:"variables,omitempty"`
+		Variables    map[string]Variable `json:"variables,omitempty"`
 	}{
 		WorkerID:     te.workerID,
 		ErrorCode:    te.errorCode,

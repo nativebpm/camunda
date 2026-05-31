@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nativebpm/camunda/internal/tasks"
 	"github.com/sequinstream/sequin-go"
 )
 
@@ -241,12 +240,12 @@ func (sw *SequinWorker) processMessage(ctx context.Context, msg sequin.Message) 
 	}
 
 	// 4. Create complete and fail builders
-	complete := func() *tasks.TaskCompletion {
-		return tasks.NewTaskCompletion(sw.client.httpClient, sw.workerID, record.ID).Context(ctx).Logger(sw.logger)
+	complete := func() *TaskCompletion {
+		return NewTaskCompletion(sw.client.httpClient, sw.workerID, record.ID).Context(ctx).Logger(sw.logger)
 	}
 
 	fail := func(errorMessage, errorDetails string, retries, retryTimeout int) error {
-		return tasks.NewTaskFailure(sw.client.httpClient, sw.workerID, record.ID).
+		return NewTaskFailure(sw.client.httpClient, sw.workerID, record.ID).
 			Context(ctx).
 			ErrorMessage(errorMessage).
 			ErrorDetails(errorDetails).
