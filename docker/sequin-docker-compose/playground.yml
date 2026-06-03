@@ -29,6 +29,52 @@ databases:
     slot_name: "sequin_slot"
     publication_name: "sequin_pub"
 
+functions:
+  - name: "camunda_enrichment"
+    type: "enrichment"
+    database: "camunda-db"
+    code: |-
+      SELECT 
+        t.id_ as id_,
+        exec.business_key_ as business_key,
+        (
+          WITH RECURSIVE execution_tree AS (
+            SELECT id_, parent_id_, 1 AS depth
+            FROM public.act_ru_execution
+            WHERE id_ = t.execution_id_
+
+            UNION ALL
+
+            SELECT e.id_, e.parent_id_, et.depth + 1
+            FROM public.act_ru_execution e
+            INNER JOIN execution_tree et ON e.id_ = et.parent_id_
+          ),
+          aggregated_variables AS (
+            SELECT DISTINCT ON (name_) 
+              name_, 
+              type_, 
+              text_, 
+              double_, 
+              long_
+            FROM public.act_ru_variable v
+            INNER JOIN execution_tree et ON v.execution_id_ = et.id_
+            ORDER BY name_, depth ASC
+          )
+          SELECT jsonb_object_agg(name_, 
+            CASE 
+              WHEN type_ = 'string' THEN jsonb_build_object('value', text_)
+              WHEN type_ = 'integer' THEN jsonb_build_object('value', long_::integer)
+              WHEN type_ = 'double' THEN jsonb_build_object('value', double_)
+              WHEN type_ = 'boolean' THEN jsonb_build_object('value', CASE WHEN long_ = 1 THEN true ELSE false END)
+              ELSE jsonb_build_object('value', text_)
+            END
+          )
+          FROM aggregated_variables
+        ) as variables
+      FROM public.act_ru_ext_task t
+      LEFT JOIN public.act_ru_execution exec ON t.proc_inst_id_ = exec.id_
+      WHERE t.id_ = ANY($1)
+
 sinks:
   - name: "camunda_tasks_stream"
     database: "camunda-db"
@@ -37,3 +83,7 @@ sinks:
     source:
       include_tables:
         - "public.act_ru_ext_task"
+    enrichment: "camunda_enrichment"
+    actions:
+      - insert
+      - update

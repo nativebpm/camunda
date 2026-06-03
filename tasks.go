@@ -12,8 +12,6 @@ import (
 	"github.com/nativebpm/httpstream"
 )
 
-
-
 // TaskCompletion provides a fluent API for completing external tasks
 type TaskCompletion struct {
 	httpClient     *httpstream.Client
@@ -146,7 +144,7 @@ func (tc *TaskCompletion) LocalNullVariable(name string) *TaskCompletion {
 
 func (tc *TaskCompletion) Execute() error {
 	req := struct {
-		WorkerID       string                   `json:"workerId"`
+		WorkerID       string              `json:"workerId"`
 		Variables      map[string]Variable `json:"variables,omitempty"`
 		LocalVariables map[string]Variable `json:"localVariables,omitempty"`
 	}{
@@ -533,9 +531,9 @@ func (te *TaskBpmnError) BooleanVariable(name string, value bool) *TaskBpmnError
 // Execute sends the BPMN error request
 func (te *TaskBpmnError) Execute() error {
 	req := struct {
-		WorkerID     string                   `json:"workerId"`
-		ErrorCode    string                   `json:"errorCode"`
-		ErrorMessage string                   `json:"errorMessage,omitempty"`
+		WorkerID     string              `json:"workerId"`
+		ErrorCode    string              `json:"errorCode"`
+		ErrorMessage string              `json:"errorMessage,omitempty"`
 		Variables    map[string]Variable `json:"variables,omitempty"`
 	}{
 		WorkerID:     te.workerID,
@@ -564,4 +562,3 @@ func (te *TaskBpmnError) Execute() error {
 
 	return nil
 }
-

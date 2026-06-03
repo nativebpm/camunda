@@ -1,0 +1,42 @@
+api_tokens:
+  - name: "loadtest-token"
+    token: "sequin_loadtest_secret_token_12345"
+
+databases:
+  - name: "sequin-playground"
+    username: "postgres"
+    password: "postgres"
+    hostname: "sequin_postgres"
+    database: "sequin_playground"
+    port: 5432
+    slot_name: "sequin_slot"
+    publication_name: "sequin_pub"
+
+  - name: "camunda-db"
+    username: "sequin_user"
+    password: "ktNyE6d9kDvXpFzzWCYDKeLzBYTZf7z88/UkZvHzuF8="
+    hostname: "camunda_postgres"
+    database: "process-engine"
+    port: 5432
+    slot_name: "sequin_slot"
+    publication_name: "sequin_pub"
+
+functions:
+  - name: "camunda_enrichment"
+    type: "enrichment"
+    database: "camunda-db"
+    code: |-
+      SELECT t.id_ as id, exec.business_key_ as business_key
+      FROM act_ru_ext_task t
+      LEFT JOIN act_ru_execution exec ON t.proc_inst_id_ = exec.id_
+      WHERE t.id_ = ANY($$1)
+
+sinks:
+  - name: "camunda_tasks_stream"
+    database: "camunda-db"
+    destination:
+      type: "sequin_stream"
+    source:
+      include_tables:
+        - "public.act_ru_ext_task"
+    enrichment: "camunda_enrichment"

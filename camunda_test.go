@@ -568,7 +568,7 @@ func TestLifecycleBPMNAndDMNWithoutState(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		
+
 		if r.Method == "POST" && r.URL.Path == "/deployment/create" {
 			deployed = true
 			w.WriteHeader(http.StatusOK)
@@ -588,7 +588,7 @@ func TestLifecycleBPMNAndDMNWithoutState(t *testing.T) {
 				return
 			}
 		}
-		
+
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer server.Close()
@@ -629,5 +629,133 @@ func TestLifecycleBPMNAndDMNWithoutState(t *testing.T) {
 	}
 	if instanceID != "instance-123" || !executed {
 		t.Fatalf("expected instanceID 'instance-123', got %s (executed=%t)", instanceID, executed)
+	}
+}
+
+func TestSequinWorker_AsyncDelegation(t *testing.T) {
+	var lockCalled, getVarsCalled, completeCalled, unlockCalled bool
+
+	// Create test HTTP server for Camunda REST API
+	camundaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/external-task/task123/lock"):
+			lockCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasPrefix(r.URL.Path, "/execution/exec123/variables"):
+			getVarsCalled = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		case strings.HasPrefix(r.URL.Path, "/process-instance/inst123"):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"businessKey": "biz123"}`))
+		case strings.HasPrefix(r.URL.Path, "/external-task/task123/complete"):
+			completeCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasPrefix(r.URL.Path, "/external-task/task123/unlock"):
+			unlockCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected REST call to: %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer camundaServer.Close()
+
+	// Create test HTTP server for Sequin API
+	var receiveCalled, ackCalled, nackCalled bool
+	var sequinServer *httptest.Server
+	sequinServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.Contains(r.URL.Path, "/receive") {
+			receiveCalled = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			// Return one message and close the server to prevent test hang
+			w.Write([]byte(`{
+				"data": [
+					{
+						"ack_id": "ack-456",
+						"data": {
+							"record": {
+								"id_": "task123",
+								"topic_name_": "asyncTopic",
+								"proc_inst_id_": "inst123",
+								"execution_id_": "exec123",
+								"business_key_": "biz123"
+							}
+						}
+					}
+				]
+			}`))
+			// No more messages to return
+			sequinServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "POST" && strings.Contains(r.URL.Path, "/ack"):
+					ackCalled = true
+					w.WriteHeader(http.StatusOK)
+				case r.Method == "POST" && strings.Contains(r.URL.Path, "/nack"):
+					nackCalled = true
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"data": []}`))
+				}
+			})
+		} else if r.Method == "POST" && strings.Contains(r.URL.Path, "/ack") {
+			ackCalled = true
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer sequinServer.Close()
+
+	// Initialize Camunda client
+	httpClient, _ := httpstream.NewClient(&http.Client{}, camundaServer.URL)
+	client := &Client{
+		httpClient: httpClient,
+		workerID:   "async-worker",
+	}
+
+	// Initialize SequinWorker
+	sw, err := NewSequinWorker(client, sequinServer.URL, "camunda_tasks", nil)
+	if err != nil {
+		t.Fatalf("failed to create SequinWorker: %v", err)
+	}
+
+	// Register handler with custom lock timeout of 1 hour that returns ErrTaskDelegated
+	sw.RegisterHandlerWithOptions("asyncTopic", TaskHandlerFunc(func(ctx context.Context, client *Client, task ExternalTask, complete CompleteFunc, fail FailFunc) error {
+		return ErrTaskDelegated
+	}), 3600000)
+
+	// Start worker in context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	sw.Start(ctx)
+
+	// Assert expectations
+	if !lockCalled {
+		t.Error("expected Lock API to be called")
+	}
+	if !getVarsCalled {
+		t.Error("expected GetVariables API to be called")
+	}
+	if !receiveCalled {
+		t.Error("expected Sequin receive API to be called")
+	}
+	if !ackCalled {
+		t.Error("expected Sequin message to be ACKed")
+	}
+	if completeCalled {
+		t.Error("expected complete API NOT to be called for async delegation")
+	}
+	if unlockCalled {
+		t.Error("expected unlock API NOT to be called for async delegation")
+	}
+	if nackCalled {
+		t.Error("expected Sequin message NOT to be NACKed")
+	}
+	if sw.lockDurations["asyncTopic"] != 3600000 {
+		t.Errorf("expected lock duration 3600000, got %d", sw.lockDurations["asyncTopic"])
 	}
 }

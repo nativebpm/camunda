@@ -55,8 +55,8 @@ func TestWorker_Start_Synctest(t *testing.T) {
 
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		worker := testNewWorker(httpClient, "test-worker", logger)
-		
-		// Set a poll interval of 5 seconds (default). 
+
+		// Set a poll interval of 5 seconds (default).
 		// Real-world testing would wait 15 seconds for 3 polls.
 		// Inside the synctest bubble, it advances instantly!
 		worker.SetPollInterval(5 * time.Second)

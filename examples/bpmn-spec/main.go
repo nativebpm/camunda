@@ -474,12 +474,12 @@ func collectActiveActivities(node ActivityInstance) []string {
 }
 
 type UserTaskInfo struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	TaskDefKey     string `json:"taskDefinitionKey"`
-	Assignee       string `json:"assignee"`
-	CreateTime     string `json:"created"`
-	ProcessInstID  string `json:"processInstanceId"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	TaskDefKey    string `json:"taskDefinitionKey"`
+	Assignee      string `json:"assignee"`
+	CreateTime    string `json:"created"`
+	ProcessInstID string `json:"processInstanceId"`
 }
 
 func handleGetTasks(w http.ResponseWriter, r *http.Request) {
@@ -624,7 +624,7 @@ func handleTriggerEvent(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(resp.Body)
 		// If message correlation fails, try sending a signal as fallback
 		logger.Info("Message correlation failed, trying signal delivery", "status", resp.StatusCode)
-		
+
 		signalPayload := map[string]any{
 			"name":      req.EventName,
 			"variables": map[string]any{},

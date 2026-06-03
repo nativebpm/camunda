@@ -28,22 +28,22 @@ type TopicRequest struct {
 
 // ExternalTask represents a Camunda external task
 type ExternalTask struct {
-	ID                  string                   `json:"id"`
-	TopicName           string                   `json:"topicName"`
-	WorkerID            string                   `json:"workerId"`
-	LockExpirationTime  *time.Time               `json:"lockExpirationTime,omitempty"`
-	Retries             *int                     `json:"retries,omitempty"`
-	ErrorMessage        string                   `json:"errorMessage,omitempty"`
-	ErrorDetails        string                   `json:"errorDetails,omitempty"`
+	ID                  string              `json:"id"`
+	TopicName           string              `json:"topicName"`
+	WorkerID            string              `json:"workerId"`
+	LockExpirationTime  *time.Time          `json:"lockExpirationTime,omitempty"`
+	Retries             *int                `json:"retries,omitempty"`
+	ErrorMessage        string              `json:"errorMessage,omitempty"`
+	ErrorDetails        string              `json:"errorDetails,omitempty"`
 	Variables           map[string]Variable `json:"variables,omitempty"`
-	BusinessKey         string                   `json:"businessKey,omitempty"`
-	TenantID            string                   `json:"tenantId,omitempty"`
-	Priority            int                      `json:"priority,omitempty"`
-	ActivityID          string                   `json:"activityId,omitempty"`
-	ActivityInstanceID  string                   `json:"activityInstanceId,omitempty"`
-	ExecutionID         string                   `json:"executionId,omitempty"`
-	ProcessInstanceID   string                   `json:"processInstanceId,omitempty"`
-	ProcessDefinitionID string                   `json:"processDefinitionId,omitempty"`
+	BusinessKey         string              `json:"businessKey,omitempty"`
+	TenantID            string              `json:"tenantId,omitempty"`
+	Priority            int                 `json:"priority,omitempty"`
+	ActivityID          string              `json:"activityId,omitempty"`
+	ActivityInstanceID  string              `json:"activityInstanceId,omitempty"`
+	ExecutionID         string              `json:"executionId,omitempty"`
+	ProcessInstanceID   string              `json:"processInstanceId,omitempty"`
+	ProcessDefinitionID string              `json:"processDefinitionId,omitempty"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for ExternalTask
@@ -92,8 +92,6 @@ func (t *ExternalTask) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
-
-
 
 // CompleteFunc is a factory function that returns a preconfigured TaskCompletion
 // so handlers can build variables fluently and then call Execute().
@@ -204,7 +202,7 @@ func (w *Worker) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			w.logger.Info("Context cancelled, waiting for active tasks to complete...")
+			w.logger.Info("Context canceled, waiting for active tasks to complete...")
 			w.activeTasksWg.Wait()
 			w.logger.Info("Worker stopped gracefully")
 			return

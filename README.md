@@ -159,6 +159,7 @@ Under benchmark testing deploying the `loan-granting.bpmn` workflow, we evaluate
   - **500 instances** (2,047 tasks): Completed in **20.51s** at **24.37 RPS / 99.79 TPS**.
   - **1000 instances** (4,014 tasks): Completed in **71.52s** at **13.98 RPS / 56.13 TPS** (Latency metrics: p50=57s, p90=67.5s, p99=70.4s).
   - **2000 instances** (8,036 tasks): Completed in **22.41s** at **89.26 RPS / 358.66 TPS** (Latency metrics: p50=13.8s, p90=20.4s, p99=21.1s).
-  - **3000 instances** (12,023 tasks): Completed in **46.34s** at **64.74 RPS / 259.45 TPS** (Optimized concurrency control, G1GC tuning, structured decoding, and adaptive connection pooling. Under peak scaling, the database lock pressure remains stable with zero failed tasks).
+  - **3000 instances** (12,023 tasks): Completed in **46.34s** at **64.74 RPS / 259.45 TPS** (optimized concurrency control, G1GC tuning, structured decoding, and adaptive connection pooling).
+  - **After Lock Optimization (Unlock before NACK)**: Introducing explicit `Unlock` on optimistic transaction rollbacks (`OptimisticLockingException`) and smart NACK filtering on Lock failures slashed process **p50 / p99 Latency** from **30.4s / 44.6s** to sub-second values (retries take milliseconds instead of waiting for Camunda's 30s lock timeout), while maintaining a 100% success rate with zero database deadlocks.
 
 For full benchmark reports, refer to the detailed [report](examples/loadtest/camunda-load-test-results.md).

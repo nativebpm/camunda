@@ -3,6 +3,7 @@ package camunda
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,10 @@ import (
 
 	"github.com/nativebpm/httpstream"
 )
+
+// ErrTaskDelegated is a sentinel error that indicates a task was successfully
+// delegated for asynchronous execution and should not be completed by the worker.
+var ErrTaskDelegated = errors.New("camunda: task delegated for asynchronous execution")
 
 // Client represents a Camunda external task client
 type Client struct {
@@ -100,6 +105,59 @@ func (c *Client) GetProcessVariables(ctx context.Context, processInstanceID stri
 
 	return variables, nil
 }
+
+// GetExecutionVariables retrieves all variables visible to an execution (including local ones)
+func (c *Client) GetExecutionVariables(ctx context.Context, executionID string) (map[string]Variable, error) {
+	resp, err := c.httpClient.GET(ctx, "/execution/{id}/variables").
+		PathParam("id", executionID).
+		Send()
+	if err != nil {
+		return nil, fmt.Errorf("failed to send get execution variables request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get execution variables request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var variables map[string]Variable
+	if err := json.Unmarshal(body, &variables); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal variables: %w", err)
+	}
+
+	return variables, nil
+}
+
+// GetProcessInstanceBusinessKey retrieves the business key of a process instance
+func (c *Client) GetProcessInstanceBusinessKey(ctx context.Context, processInstanceID string) (string, error) {
+	resp, err := c.httpClient.GET(ctx, "/process-instance/{id}").
+		PathParam("id", processInstanceID).
+		Send()
+	if err != nil {
+		return "", fmt.Errorf("failed to get process instance: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("get process instance failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		BusinessKey string `json:"businessKey"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode process instance: %w", err)
+	}
+
+	return result.BusinessKey, nil
+}
+
 
 // StartProcessInstance starts a process instance and sets the businessKey
 // The variables map can be nil or empty; heavy application data should be stored
@@ -240,5 +298,3 @@ type TaskHandlerFunc func(ctx context.Context, client *Client, task ExternalTask
 func (f TaskHandlerFunc) Handle(ctx context.Context, client *Client, task ExternalTask, complete CompleteFunc, fail FailFunc) error {
 	return f(ctx, client, task, complete, fail)
 }
-
-
